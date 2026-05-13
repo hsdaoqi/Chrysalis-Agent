@@ -45,6 +45,7 @@ workspace/         工具默认读写的工作目录
 ~~~
 下载到本地：git clone https://github.com/hsdaoqi/Chrysalis-Agent.git
 安装最小依赖： pip install openai dotenv
+然后把.env.example文件复制一份为.env文件
 启动 ：python -m chrysalis.kernel --interactive
 ~~~
 
