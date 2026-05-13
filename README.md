@@ -41,6 +41,13 @@ workspace/         工具默认读写的工作目录
 
 ## 运行
 
+快速启动
+~~~
+安装最小依赖： pip install openai dotenv
+启动 ：python -m chrysalis.kernel --interactive
+~~~
+
+
 ```powershell
 chrysalis "列出 workspace 里的文件"
 ```
