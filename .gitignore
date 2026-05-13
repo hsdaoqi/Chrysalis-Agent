@@ -1,0 +1,46 @@
+# Python 缓存
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 本地配置和密钥
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+id_rsa
+id_ed25519
+
+# IDE / 系统文件
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# 构建产物
+build/
+dist/
+*.egg-info/
+
+# Chrysalis 运行态数据
+data/
+
+
+# 浏览器/CDP 临时 profile
+browser_profile/
+workspace/browser_profile/
+
+# 日志
+*.log
+logs/

@@ -1,0 +1,14 @@
+# [Global Memory Insight]
+需要时 read L2 或 ls memory/ 查 L3。
+L0(META-SOP): memory_management_sop
+L2: global_mem.txt
+L3: memory_cleanup_sop(记忆整理) | skill_search | plan_sop | verify_sop | web_setup_sop
+L4: data/trace.log 运行轨迹摘要
+
+[RULES]
+1. 无行动不记忆：写入 L1/L2/L3 必须来自成功工具结果，禁止把猜测写成事实。
+2. L1 只放最短存在性指针，禁止写 how-to 细节，保持 30 行以内。
+3. 新增 skill 很克制：必须高复用、高成本、跨会话仍重要；调用已有 skill 成功时禁止再沉淀重复 skill。
+4. 普通一次性任务、闲聊、简单文件读写、几步可重建流程，不新增 skill。
+5. 验证优先：能运行就运行，能读回就读回，不用描述替代验证。
+- skills: 来源任务：你的技能，skills沉淀的触发代码在哪

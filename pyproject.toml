@@ -1,0 +1,20 @@
+[project]
+name = "chrysalis"
+version = "0.1.0"
+description = "一个从 GenericAgent 风格种子重建的极简自进化 agent。"
+requires-python = ">=3.11"
+dependencies = [
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+chrysalis = "chrysalis.kernel:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
