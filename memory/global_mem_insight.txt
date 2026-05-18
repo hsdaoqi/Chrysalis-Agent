@@ -1,14 +1,18 @@
 # [Global Memory Insight]
-需要时 read L2 或 ls memory/ 查 L3。
+需要时read L2 或 ls ../memory/ 查L3
 L0(META-SOP): memory_management_sop
 L2: global_mem.txt
-L3: memory_cleanup_sop(记忆整理) | skill_search | plan_sop | verify_sop | web_setup_sop
-L4: data/trace.log 运行轨迹摘要
+L3: memory_cleanup_sop(记忆整理) | skill_search | plan_sop | verify_sop | web_setup_sop | git_sop(git操作规范)
+L4: data/l4_session 历史会话
+
+浏览器特殊操作: tmwebdriver_sop(文件上传/图搜/PDF blob/物理坐标/HttpOnly Cookie/autofill突破/跨域iframe/CDP/跨tab)
 
 [RULES]
-1. 无行动不记忆：写入 L1/L2/L3 必须来自成功工具结果，禁止把猜测写成事实。
-2. L1 只放最短存在性指针，禁止写 how-to 细节，保持 30 行以内。
-3. 新增 skill 很克制：必须高复用、高成本、跨会话仍重要；调用已有 skill 成功时禁止再沉淀重复 skill。
-4. 普通一次性任务、闲聊、简单文件读写、几步可重建流程，不新增 skill。
-5. 验证优先：能运行就运行，能读回就读回，不用描述替代验证。
-- skills: 来源任务：你的技能，skills沉淀的触发代码在哪
+1. 搜索先行: 搜文件名严禁不用es(禁PS递归/禁dir遍历), 搜索一定优先使用web工具的google(严禁duckduckgo等), 优先看cwd，禁猜路径
+2. 交叉验证: 禁信摘要, 数值进详情页核实
+3. 编码安全: 禁PS cat/type用file_read; 改前必读
+4. 闭环: 物理模拟后确认; 3次失败请求干预; Git完整闭环
+5. 进程: 禁无条件杀python(杀自己), 精确PID, 禁os.kill判活
+6. SOP: 读SOP禁凭印象,有utils必用 | 复杂超长程任务/用户明确提及规划模式→读plan_sop
+7. 路径: code_run cwd=项目根D:\Project\Chrysalis, 写入文件用相对路径如'titles.txt', 禁加workspace/前缀
+8. Git: 涉及git操作→用shell_run执行git命令, 详见git_sop; 禁git reset --hard/push --force

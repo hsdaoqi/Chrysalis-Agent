@@ -3,7 +3,7 @@
 import sys
 from typing import Callable
 
-from chrysalis.text import brief_text
+from utils.text import brief_text
 
 
 ProgressCallback = Callable[[str], None]

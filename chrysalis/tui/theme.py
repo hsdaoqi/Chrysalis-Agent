@@ -1,0 +1,9 @@
+"""TUI 颜色和样式常量。"""
+
+USER_COLOR = "#7aa2f7"
+AGENT_COLOR = "#9ece6a"
+TOOL_COLOR = "#e0af68"
+ERROR_COLOR = "#f7768e"
+DIM_COLOR = "#565f89"
+SUCCESS_COLOR = "#73daca"
+BORDER_COLOR = "#3b4261"

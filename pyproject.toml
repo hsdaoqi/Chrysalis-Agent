@@ -13,6 +13,9 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
 ]
+tui = [
+    "textual>=0.80.0",
+]
 
 [project.scripts]
 chrysalis = "chrysalis.kernel:main"

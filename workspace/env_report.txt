@@ -1,0 +1,14 @@
+Python Version: 3.13.12
+Pip Version: pip 26.0.1 from D:\conda\Lib\site-packages\pip (python 3.13)
+
+Top 10 Installed Packages:
+1. aiohappyeyeballs 2.6.1
+2. aiohttp 3.13.5
+3. aiosignal 1.4.0
+4. anaconda-anon-usage 0.7.5
+5. anaconda-auth 0.13.0
+6. anaconda-cli-base 0.8.1
+7. annotated-types 0.6.0
+8. anyio 4.10.0
+9. APScheduler 3.11.2
+10. archspec 0.14.1

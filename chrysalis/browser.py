@@ -23,7 +23,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from chrysalis.config import project_path
+from configs.config import project_path
 
 
 MAX_HTML_CHARS = 180_000
@@ -32,6 +32,52 @@ MAX_JS_CHARS = 20_000
 DEFAULT_TIMEOUT = 15
 DEFAULT_WAIT_MS = 1000
 IGNORED_TAGS = {"script", "style", "noscript", "meta", "link", "svg", "canvas", "template"}
+USER_ACTION_PATTERNS = (
+    "请先登录",
+    "登录后查看",
+    "登录后继续",
+    "登录后可见",
+    "登录即可",
+    "扫码登录",
+    "验证码登录",
+    "手机登录",
+    "密码登录",
+    "未登录",
+    "sign in to continue",
+    "log in to continue",
+    "please sign in",
+    "please log in",
+    "请完成验证",
+    "安全验证",
+    "人机验证",
+    "滑块验证",
+    "拖动滑块",
+    "请输入验证码",
+    "短信验证码",
+    "扫码验证",
+    "验证身份",
+    "需要验证",
+    "请授权",
+    "授权后继续",
+    "请确认",
+    "确认继续",
+    "请选择",
+    "请上传",
+    "上传文件",
+    "选择文件",
+    "请选择文件",
+    "请支付",
+    "立即支付",
+    "captcha",
+    "verify you are human",
+    "human verification",
+    "verification required",
+    "complete verification",
+    "choose file",
+    "upload file",
+    "authorize",
+    "payment required",
+)
 
 
 @dataclass
@@ -105,7 +151,10 @@ class BrowserController:
             title=active.get("title", "") if active else "",
             text_only=text_only,
         )
-        return self._scan_result(tabs=self._tabs(), content=content, text_only=text_only)
+        result = self._scan_result(tabs=self._tabs(), content=content, text_only=text_only)
+        if isinstance(content, dict) and content.get("user_action_required"):
+            result.update(_user_action_intervention(content))
+        return result
 
     def execute_js(self, script: str, tab_id: str | None = None, timeout: int = DEFAULT_TIMEOUT) -> dict:
         """在真实浏览器标签页执行 JS。"""
@@ -385,7 +434,7 @@ def simplify_html(html: str, url: str = "", title: str = "", text_only: bool = F
     text = _clean_text(" ".join(parser.text_parts))[:MAX_TEXT_CHARS]
     if text_only:
         return text
-    return {
+    summary = {
         "url": url,
         "title": page_title,
         "text": text,
@@ -394,6 +443,88 @@ def simplify_html(html: str, url: str = "", title: str = "", text_only: bool = F
         "inputs": _trim_items(parser.inputs, 80),
         "buttons": _trim_items(parser.buttons, 80),
     }
+    intervention = detect_user_action_required(summary)
+    summary["user_action_required"] = intervention["user_action_required"]
+    summary["user_action_signals"] = intervention["signals"]
+    summary["user_action_reason"] = intervention["reason"]
+    summary["login_required"] = intervention["reason"] == "login_required"
+    summary["login_signals"] = intervention["signals"] if summary["login_required"] else []
+    return summary
+
+
+def detect_user_action_required(summary: dict) -> dict:
+    """识别会阻塞 agent 继续执行的人工操作点。
+
+    这不是替用户判断所有按钮，而是识别登录、验证、授权、上传、支付、
+    强确认等需要用户亲自处理的节点。
+    """
+    text = str(summary.get("text", ""))
+    lowered = text.lower()
+    url = str(summary.get("url", "")).lower()
+    title = str(summary.get("title", "")).lower()
+    inputs = summary.get("inputs", []) or []
+    buttons = summary.get("buttons", []) or []
+    signals: list[str] = []
+
+    for pattern in USER_ACTION_PATTERNS:
+        if pattern in lowered:
+            signals.append(pattern)
+    if any(str(item.get("type", "")).lower() == "password" for item in inputs):
+        signals.append("password_input")
+    if any(str(item.get("type", "")).lower() == "file" for item in inputs):
+        signals.append("file_input")
+    if any("login" in str(item.get("id", "")).lower() or "登录" in str(item.get("text", "")) for item in buttons):
+        if len(text) < 1200:
+            signals.append("login_button_on_short_page")
+    if any("captcha" in str(item).lower() or "验证码" in str(item) for item in inputs):
+        signals.append("captcha_input")
+    if "/login" in url or "passport" in url or "signin" in url:
+        signals.append("login_url")
+    if "captcha" in url or "verify" in url:
+        signals.append("verification_url")
+    if "登录" in title or "sign in" in title:
+        signals.append("login_title")
+    if "验证" in title or "captcha" in title or "verification" in title:
+        signals.append("verification_title")
+
+    strong = [item for item in signals if item not in {"login_button_on_short_page"}]
+    reason = _user_action_reason(strong)
+    return {
+        "user_action_required": bool(strong),
+        "reason": reason,
+        "signals": _dedupe(signals),
+    }
+
+
+def _user_action_intervention(content: dict) -> dict:
+    reason = str(content.get("user_action_reason") or "user_action_required")
+    signals = content.get("user_action_signals", [])
+    signal_text = "、".join(str(item) for item in signals[:4]) or "页面需要用户操作"
+    return {
+        "need_user": True,
+        "reason": reason,
+        "question": (
+            f"当前浏览器页面可能需要你亲自操作（{signal_text}）。"
+            "请在已打开的浏览器里完成该操作后回复“已完成，继续”，"
+            "或者回复“跳过，换方案”。"
+        ),
+        "candidates": ["已完成，继续", "跳过，换方案"],
+    }
+
+
+def _user_action_reason(signals: list[str]) -> str:
+    joined = " ".join(str(item).lower() for item in signals)
+    if any(item in joined for item in ("login", "登录", "passport", "password", "sign in", "log in")):
+        return "login_required"
+    if any(item in joined for item in ("验证", "captcha", "verify", "verification", "滑块")):
+        return "verification_required"
+    if any(item in joined for item in ("upload", "file", "上传", "选择文件")):
+        return "file_upload_required"
+    if any(item in joined for item in ("支付", "payment")):
+        return "payment_required"
+    if any(item in joined for item in ("授权", "authorize")):
+        return "authorization_required"
+    return "user_action_required"
 
 
 def _find_browser_executable() -> Path | None:
@@ -450,3 +581,11 @@ def _pick_attrs(attrs: dict[str, str], names: list[str]) -> dict:
 def _trim_items(items: list[dict], limit: int) -> list[dict]:
     cleaned = [item for item in items if any(str(value).strip() for value in item.values())]
     return cleaned[:limit]
+
+
+def _dedupe(items: list[str]) -> list[str]:
+    result = []
+    for item in items:
+        if item not in result:
+            result.append(item)
+    return result

@@ -6,7 +6,7 @@ Agent 可以拿到很大的文件、网页或 stdout，但下一轮模型并不�
 
 from collections.abc import Mapping, Sequence
 
-from chrysalis.text import brief_text
+from utils.text import brief_text
 
 
 TEXT_KEYS = {"content", "body", "stdout", "stderr", "error", "final", "message"}

@@ -6,171 +6,111 @@ import sys
 import time
 
 from chrysalis.agent_loop import AgentLoop
-from chrysalis.config import AgentConfig
-from chrysalis.evolve import SkillGenerator, crystallize_skill, safe_skill_name
-from chrysalis.llm import DeepSeekChat
-from chrysalis.memory import Memory
-from chrysalis.progress import ProgressCallback, stderr_progress
-from chrysalis.reflect import reflect_traces
+from chrysalis import subagent
+from chrysalis.task_queue import TaskQueue
+from configs.config import AgentConfig
+from chrysalis.llm import LLMClient, create_client
+from utils.progress import ProgressCallback, stderr_progress
 from chrysalis.session import SessionContext
-from chrysalis.skills import SkillLibrary
-from chrysalis.tools import file_list
-from chrysalis.trace import TraceRecorder
 
 HELP_TEXT = """用法：
   chrysalis [--quiet] <任务>
   chrysalis --interactive
+  chrysalis --tui
   python -m chrysalis.kernel [--quiet] <任务>
 
 参数：
   <任务>        交给 agent 的任务
   -i, --interactive
                 进入连续对话模式
+  --tui        启动终端 UI 模式
   --quiet      不显示每轮进度摘要
   -h, --help   显示这段帮助
 """
 
 EXIT_COMMANDS = {"/exit", "/quit", "exit", "quit", "退出", "再见"}
+USER_ACTION_DONE_WORDS = ("已完成", "完成了", "弄好了", "操作好了", "已登录", "登录好了", "登录完成", "继续")
+USER_ACTION_SKIP_WORDS = ("跳过", "不登录", "跳过登录", "换方案", "换公开", "公开来源", "不用这个")
 
 
 class Kernel:
     def __init__(
             self,
             config: AgentConfig | None = None,
-            llm: DeepSeekChat | None = None,
+            llm: LLMClient | None = None,
             progress: ProgressCallback | None = None,
-            skill_generator: SkillGenerator | None = None,
     ):
         self.config = config or AgentConfig()
         self.progress = progress
-        self.skill_generator = skill_generator
-        self.memory = Memory(self.config.memory_dir, self.config.memory_json)
-        self.session = SessionContext()
-        self.llm = llm or DeepSeekChat(self.config.llm)
-        self.skills = SkillLibrary(self.config.skills_dir, self.memory)
+        self.session = SessionContext(
+            persist_path=self.config.data_dir / "session.json",
+        )
+        self.session.load()
+        self.llm = llm or create_client(self.config.llm.to_session_config())
+        self.pending_user_action: dict | None = None
+        self.history: list[str] = []
         self.loop = AgentLoop(
             self.llm,
-            self.memory,
             self.config.workspace_dir,
-            self.skills,
             self.config.max_turns,
             progress=self.progress,
+            history=self.history,
         )
-        self.traces = TraceRecorder(self.config.trace_log)
+        subagent.configure(
+            session_config=self.config.llm.to_session_config(),
+            progress=self.progress,
+        )
 
     def run(self, task: str) -> dict:
         started = time.perf_counter()
-        self._progress(f"开始任务：{task}")
-        direct = self._try_direct_tool(task)
-        if direct is not None:
-            direct["elapsed_ms"] = _elapsed_ms(started)
-            self._progress(f"本地直达：{direct.get('final', '已完成。')}")
-            self._append_trace_safely(task, direct)
-            self.session.remember(task, direct)
-            return direct
+        run_task, extra_context = self._resolve_pending_user_action(task)
+        self._progress(f"开始任务：{run_task}")
 
         try:
-            result = self.loop.run(task, session_context=self.session.context())
+            session_context = self.session.context()
+            if extra_context:
+                session_context = (session_context + "\n\n" + extra_context).strip()
+            result = self.loop.run(run_task, session_context=session_context)
         except Exception as exc:
             result = {
                 "ok": False,
                 "error": str(exc),
                 "final": f"任务执行异常：{exc}",
-                "model_error": True,
-                "exception_type": type(exc).__name__,
-                "transcript": [],
+            }
+        if result.get("need_user"):
+            self.pending_user_action = {
+                "task": run_task,
+                "question": result.get("question") or result.get("final", ""),
+                "reason": result.get("reason", "need_user"),
             }
 
-        if self._should_write_skill(task, result):
-            result["skill_candidate"] = True
-            try:
-                skill = crystallize_skill(
-                    self.config.skills_dir,
-                    task,
-                    result.get("transcript", []),
-                    generator=self.skill_generator,
-                )
-            except Exception as exc:
-                message = f"技能沉淀验证失败，已跳过写入：{exc}"
-                result.setdefault("warnings", []).append(message)
-                result["skill_validation_error"] = str(exc)
-            else:
-                self.memory.add_skill(skill.name, skill.description)
-                result["skill"] = str(skill.path)
-                result["skill_steps"] = skill.steps_count
-                result["skill_generator"] = skill.generator
         result["elapsed_ms"] = _elapsed_ms(started)
-        self._append_trace_safely(task, result)
-        self.session.remember(task, result)
+        self.session.remember(run_task, result)
         return result
 
     def _progress(self, message: str) -> None:
         if self.progress is not None:
             self.progress(message)
 
-    def _try_direct_tool(self, task: str) -> dict | None:
-        """少量本地自检任务不必请求模型。"""
-        lower = task.lower()
-        wants_list = any(word in lower for word in ("列出", "看看", "查看", "有哪些", "list"))
-        mentions_workspace = any(word in lower for word in ("workspace", "工作目录"))
-        if wants_list and mentions_workspace:
-            data = file_list(".", self.config.workspace_dir)
-            return {"ok": data.get("ok", False), "final": "已列出 workspace。", "data": data, "transcript": []}
-        wants_dirs = any(word in lower for word in ("目录", "文件夹", "directories", "folders"))
-        mentions_project = any(word in lower for word in ("本项目", "项目", "根目录", "project"))
-        if wants_list and wants_dirs and mentions_project:
-            data = file_list(".", self.config.root)
-            directories = [item for item in data.get("entries", []) if item.get("type") == "dir"]
-            names = "、".join(item["name"] for item in directories) or "无"
-            data["directories"] = directories
-            return {
-                "ok": data.get("ok", False),
-                "final": f"项目根目录包含这些目录：{names}。",
-                "data": data,
-                "transcript": [],
-            }
-        wants_reflect = any(word in lower for word in ("复盘", "反思", "reflect"))
-        mentions_run = any(word in lower for word in ("运行", "trace", "轨迹", "最近"))
-        if wants_reflect and mentions_run:
-            return reflect_traces(self.config)
-        return None
-
-    def _append_trace_safely(self, task: str, result: dict) -> None:
-        try:
-            self.traces.append(task, result)
-        except Exception as exc:
-            result.setdefault("warnings", []).append(f"写入运行轨迹失败：{exc}")
-
-    def _should_write_skill(self, task: str, result: dict) -> bool:
-        """判断本轮是否允许沉淀 skill。
-
-        对齐 GA 的克制原则：不是用户手动指定，而是由执行轨迹说明“值得记住”。
-        只有长链路、多工具、未调用已有技能、且没有重复沉淀过的成功任务才会写入。
-        """
-        if not result.get("ok"):
-            return False
-        transcript = result.get("transcript", [])
-        if not transcript:
-            return False
-        if any("skill" in item for item in transcript if isinstance(item, dict)):
-            return False
-        if self._skill_already_exists(task):
-            return False
-
-        turns = [int(item.get("turn", 0)) for item in transcript if isinstance(item, dict)]
-        turn_count = max(turns, default=0)
-        tool_calls = [item for item in transcript if isinstance(item, dict) and item.get("tool")]
-        if turn_count < self.config.min_skill_turns:
-            return False
-        if len(tool_calls) < 3:
-            return False
-        return True
-
-    def _skill_already_exists(self, task: str) -> bool:
-        name = safe_skill_name(task)
-        if (self.config.skills_dir / f"{name}.py").exists():
-            return True
-        return any(skill["name"] == name for skill in self.memory.list_skills())
+    def _resolve_pending_user_action(self, task: str) -> tuple[str, str]:
+        if not self.pending_user_action:
+            return task, ""
+        normalized = task.strip().lower()
+        pending = self.pending_user_action
+        original_task = str(pending.get("task", task))
+        if any(word in normalized for word in USER_ACTION_DONE_WORDS):
+            self.pending_user_action = None
+            return (
+                original_task,
+                "用户刚才已经完成此前需要的人为操作。请从当前状态继续原任务，不要重新从头搜索。",
+            )
+        if any(word in normalized for word in USER_ACTION_SKIP_WORDS):
+            self.pending_user_action = None
+            return (
+                original_task,
+                "用户选择跳过此前需要人为操作的路径。请避开该路径，改用其他可行方案继续原任务。",
+            )
+        return task, ""
 
 
 def main() -> None:
@@ -180,9 +120,15 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(add_help=False)
     parser.add_argument("-i", "--interactive", action="store_true", help="进入连续对话模式")
+    parser.add_argument("--tui", action="store_true", help="启动终端 UI 模式")
     parser.add_argument("--quiet", action="store_true", help="不显示每轮进度摘要")
     parser.add_argument("task", nargs="*", help="交给 agent 的任务")
     args = parser.parse_args()
+
+    if args.tui:
+        from chrysalis.tui import launch_tui
+        launch_tui()
+        return
 
     task = " ".join(args.task).strip()
     if args.interactive:
@@ -201,9 +147,18 @@ def main() -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
+QUEUE_COMMANDS = {"/queue", "/q"}
+QUEUE_ADD_PREFIX = ("/add ", "/a ")
+
+
 def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> None:
     """运行一个最小交互循环：一行任务执行一次，直到用户退出。"""
+    queue = TaskQueue(kernel.config.data_dir / "task_queue.json")
     output_func("Chrysalis 交互模式。输入 /exit 或 退出 结束。")
+    pending = queue.pending_count()
+    if pending:
+        output_func(f"  队列中有 {pending} 个待处理任务。输入回车自动执行，或 /queue 查看。")
+
     while True:
         try:
             task = input_func("chrysalis> ").strip()
@@ -211,17 +166,72 @@ def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> No
             output_func("已退出。")
             return
 
-        if not task:
-            continue
         if task.lower() in EXIT_COMMANDS:
             output_func("已退出。")
             return
+
+        if task.lower() in QUEUE_COMMANDS:
+            _show_queue(queue, output_func)
+            continue
+
+        if any(task.lower().startswith(p) for p in QUEUE_ADD_PREFIX):
+            new_task = task.split(" ", 1)[1].strip() if " " in task else ""
+            if new_task:
+                queue.add(new_task)
+                output_func(f"已添加到队列。当前待处理：{queue.pending_count()}")
+            else:
+                output_func("用法：/add <任务描述>")
+            continue
+
+        if not task:
+            executed = _try_run_queued(kernel, queue, output_func)
+            if not executed:
+                continue
+            continue
 
         try:
             result = kernel.run(task)
         except Exception as exc:
             result = {"ok": False, "error": str(exc)}
         output_func(format_interactive_result(result))
+
+
+def _try_run_queued(kernel: Kernel, queue: TaskQueue, output_func) -> bool:
+    """尝试从队列取一个 pending 任务执行。返回是否执行了任务。"""
+    item = queue.next_pending()
+    if item is None:
+        return False
+    index, task_data = item
+    task_text = task_data.get("task", "")
+    output_func(f"[队列] 执行任务：{task_text}")
+    queue.mark_running(index)
+    try:
+        result = kernel.run(task_text)
+    except Exception as exc:
+        result = {"ok": False, "error": str(exc)}
+    if result.get("ok"):
+        queue.mark_done(index, result.get("final", ""))
+    else:
+        queue.mark_failed(index, result.get("error", result.get("final", "")))
+    output_func(format_interactive_result(result))
+    remaining = queue.pending_count()
+    if remaining:
+        output_func(f"  队列剩余 {remaining} 个任务。回车继续执行。")
+    return True
+
+
+def _show_queue(queue: TaskQueue, output_func) -> None:
+    tasks = queue.load()
+    if not tasks:
+        output_func("队列为空。")
+        return
+    for i, t in enumerate(tasks):
+        status = t.get("status", "?")
+        marker = {"pending": "[ ]", "running": "[>]", "done": "[x]", "failed": "[!]"}.get(status, "[?]")
+        line = f"  {marker} {i+1}. {t.get('task', '')}"
+        if status in ("done", "failed") and t.get("result"):
+            line += f"  -> {t['result'][:60]}"
+        output_func(line)
 
 
 def format_interactive_result(result: dict) -> str:

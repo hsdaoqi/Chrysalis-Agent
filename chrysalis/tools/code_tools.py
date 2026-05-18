@@ -1,0 +1,116 @@
+"""代码执行工具：code_run（支持 Python 和 shell）。"""
+
+import ast
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+from configs.config import PROJECT_ROOT, project_path
+from chrysalis.tools.registry import tool
+from chrysalis.tools.safety import DANGEROUS_CODE_PATTERNS, blocked_shell_pattern, safe_path
+
+
+@tool("code_run", "代码执行器，支持 Python 和 shell。多次调用可用 script 参数", params={
+    "script": "代码内容",
+    "type": "代码类型(python|powershell|bash)，默认python",
+    "timeout": "超时秒数(默认30)",
+    "cwd": "工作目录(可选)",
+})
+def code_run(args: dict, workspace: Path | None = None) -> dict:
+    code = args.get("script", args.get("code", ""))
+    code_type = args.get("type", "python").strip().lower()
+    timeout = int(args.get("timeout", 30))
+    cwd = args.get("cwd")
+
+    if code_type == "python":
+        return _run_python(code, timeout, cwd, workspace)
+    else:
+        return _run_shell(code, code_type, timeout, cwd, workspace)
+
+
+def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None) -> dict:
+    for pattern in DANGEROUS_CODE_PATTERNS:
+        if pattern in code:
+            return {"ok": False, "error": f"代码包含暂不允许的片段: {pattern}"}
+
+    base = safe_path(cwd, workspace) if cwd else (workspace or project_path("workspace"))
+    base.mkdir(parents=True, exist_ok=True)
+    prelude = (
+        "import sys\nimport json\nfrom pathlib import Path\n"
+        f"sys.path.insert(0, {str(PROJECT_ROOT)!r})\n"
+        f"PROJECT_ROOT = Path({str(PROJECT_ROOT)!r})\n"
+        f"WORKSPACE = Path({str(base)!r})\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, encoding="utf-8") as f:
+        script = Path(f.name)
+        f.write(prelude + "\n" + code)
+
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(base), capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"代码执行超时: {timeout} 秒"}
+    finally:
+        try:
+            script.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    stdout = proc.stdout.strip()
+    stderr = proc.stderr.strip()
+    if proc.returncode != 0:
+        return {"ok": False, "error": stderr or stdout or f"退出码: {proc.returncode}"}
+
+    parsed = _parse_last_json_line(stdout)
+    if parsed is not None:
+        parsed.setdefault("ok", True)
+        return parsed
+    return {"ok": True, "stdout": stdout}
+
+
+def _run_shell(command: str, shell_type: str, timeout: int, cwd: str | None, workspace: Path | None) -> dict:
+    if not command:
+        return {"ok": False, "error": "command 不能为空"}
+    blocked = blocked_shell_pattern(command)
+    if blocked:
+        return {"ok": False, "error": f"shell 命令被安全策略拦截: {blocked}"}
+
+    base = safe_path(cwd, workspace) if cwd else (workspace or project_path("workspace"))
+    base.mkdir(parents=True, exist_ok=True)
+
+    if shell_type == "bash":
+        cmd = ["bash", "-lc", command]
+    else:
+        cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
+
+    try:
+        proc = subprocess.run(cmd, cwd=str(base), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "error": f"shell 命令执行超时: {timeout} 秒"}
+
+    return {
+        "ok": proc.returncode == 0,
+        "exit_code": proc.returncode,
+        "stdout": proc.stdout.strip()[:20_000],
+        "stderr": proc.stderr.strip()[:5_000],
+    }
+
+
+def _parse_last_json_line(text: str) -> dict | None:
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            try:
+                value = ast.literal_eval(line)
+            except (ValueError, SyntaxError):
+                continue
+        return value if isinstance(value, dict) else {"value": value}
+    return None

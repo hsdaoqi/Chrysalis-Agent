@@ -1,139 +1,114 @@
 # Chrysalis
 
-这是一个从 GenericAgent 思路重新搭起来的极简种子项目。
+从 GenericAgent 思路重新搭建的极简自主 agent。架构清晰，能力逐步生长。
 
-目标不是一开始就做大，而是先让架构足够清楚，之后一点点长能力：
+## 快速开始
+
+```bash
+git clone https://github.com/hsdaoqi/Chrysalis-Agent.git
+cd Chrysalis-Agent
+pip install -e .
+```
+
+复制 `.env.example` 为 `.env`，填入 API Key：
 
 ```text
-用户任务
-  -> Kernel 总装配
-  -> AgentLoop 行动循环
-  -> DeepSeek 模型
-  -> 原子工具
-  -> Memory 记忆
-  -> 必要时自动沉淀一个技能
+CHRYSALIS_LLM_PROVIDER=openai
+CHRYSALIS_API_KEY=sk-xxx
+CHRYSALIS_BASE_URL=https://api.deepseek.com
+CHRYSALIS_MODEL=deepseek-v4-pro
 ```
+
+支持任何 OpenAI 兼容的 API（DeepSeek、中转站、Claude via 中转站等）。
+
+## 运行方式
+
+```bash
+# 单次任务
+chrysalis "帮我重构 utils.py"
+
+# 交互模式
+chrysalis --interactive
+
+# TUI 模式（需要 pip install -e ".[tui]"）
+chrysalis --tui
+```
+
+## 架构
+
+```text
+用户任务 → Kernel 装配 → AgentLoop 行动循环 → LLM (function calling)
+                                    ↓
+                              原子工具执行 → 观察压缩 → 下一轮
+                                    ↓
+                              Memory 记忆体系 → 经验沉淀
+```
+
+## 工具集（10 个）
+
+| 工具 | 用途 |
+|------|------|
+| `code_run` | 代码执行器（Python / PowerShell / Bash） |
+| `file_read` | 读取文件，支持行号定位和关键词搜索 |
+| `file_write` | 写入/追加/前插文件 |
+| `file_patch` | 替换文件中唯一匹配的文本块 |
+| `web_scan` | 用本机浏览器扫描网页，返回简化 HTML |
+| `web_execute_js` | 在浏览器标签页执行 JS |
+| `update_working_checkpoint` | 更新任务内短期工作记忆 |
+| `ask_user` | 遇到阻塞时询问用户 |
+| `start_long_term_update` | 标记当前任务有可沉淀经验 |
+| `spawn_subagent` | 派生并行子 agent 执行子任务 |
+
+shell 命令（git、npm 等）通过 `code_run(type="powershell")` 执行。
+
+## 记忆体系（4 层）
+
+```text
+L0  META-SOP        memory_management_sop.md — 记忆写入的宪法
+L1  Insight Index   global_mem_insight.txt — 极简索引（<30行），每轮注入
+L2  Fact Store      global_mem.txt — 环境事实（路径、配置、凭据名）
+L3  SOPs            memory/*.md — 操作规范（git、web、plan、verify…）
+L4  Session Archive data/l4_session/ — 压缩后的历史会话
+```
+
+原则：**No Execution, No Memory** — 只有工具验证过的事实才能写入。
+
+## LLM 模块
+
+- 支持 OpenAI 和 Anthropic 协议，自动适配
+- Native function calling（不再用 JSON-in-text）
+- 流式输出 + 上下文自动裁剪
+- 多模型 failover + 指数退避重试
+- 原始 prompt/response 日志记录
 
 ## 目录结构
 
 ```text
 chrysalis/
-  config.py        项目根路径和环境变量配置
-  llm/deepseek.py  通过 OpenAI-compatible API 调用 DeepSeek
-  tools.py         最小原子工具
-  observation.py   工具观察结果压缩
-  memory.py        memory/global_mem_insight.txt + data/memory.json
-  trace.py         data/trace.log 运行轨迹摘要
-  reflect.py       基于 trace.log 生成复盘报告
-  skills.py        搜索并执行已有技能
-  agent_loop.py    观察-行动循环
-  evolve.py        最小技能写入器
-  kernel.py        CLI 入口和模块装配
+  kernel.py          CLI 入口 + Kernel 装配
+  agent_loop.py      观察-行动循环（function calling / JSON-in-text 双模式）
+  session.py         跨 session 持久化上下文
+  working.py         任务内短期工作记忆
+  observation.py     工具观察结果压缩
+  subagent.py        并行子 agent 派生
+  browser.py         CDP 浏览器控制
+  task_queue.py      任务队列
+  compress_session.py  L4 会话压缩归档
+  llm/               LLM 模块（streaming、failover、context trim）
+  tools/             原子工具注册表
+  tui/               终端 UI（Textual）
 
-data/              机器可读的运行状态和 trace.log
-data/reflections/  自动生成的运行复盘报告
-memory/            人类可读的长期记忆和 SOP
-skills/            后续沉淀出的技能
-workspace/         工具默认读写的工作目录
+configs/config.py    项目路径和运行时配置
+utils/               文本工具、prompt 组装、进度回调
+memory/              长期记忆和 SOP
+data/                运行状态、session 持久化、日志
+workspace/           工具默认工作目录
 ```
 
-所有默认路径都固定在项目主目录下，不跟随启动命令时的 shell 当前目录乱跑。
+## 设计原则
 
-## 运行
-
-快速启动
-~~~
-下载到本地：git clone https://github.com/hsdaoqi/Chrysalis-Agent.git
-安装最小依赖： pip install openai dotenv
-然后把.env.example文件复制一份为.env文件
-启动 ：python -m chrysalis.kernel --interactive
-~~~
-
-
-```powershell
-chrysalis "列出 workspace 里的文件"
-```
-
-或者：
-
-```powershell
-python -m chrysalis.kernel "列出 workspace 里的文件"
-```
-
-运行时默认会在终端显示每轮摘要，例如“第 1 轮：调用工具 file_list”。这些进度写到 stderr，最终 JSON 仍写到 stdout。需要安静输出时：
-
-```powershell
-python -m chrysalis.kernel --quiet "你的任务"
-```
-
-默认不会因为一次成功就新增技能。内核会按执行轨迹自动判断：只有超过 15 轮、工具轨迹足够复杂、没有调用过已有技能、也没有重复沉淀过时，才会写入一个回放技能。
-
-在 `.env` 里配置 DeepSeek：
-
-```text
-CHRYSALIS_API_KEY=...
-CHRYSALIS_MODEL=deepseek-chat
-CHRYSALIS_BASE_URL=https://api.deepseek.com/v1
-```
-
-## 当前设计
-
-这一版故意不把旧项目里的完整自进化流水线一次性塞回来。
-
-它先保留一个容易读懂的小循环：
-
-```text
-把 L1 记忆注入 system -> 模型决定调用技能/工具 -> 观察结果 -> 再决定 -> 给最终回答
-```
-
-已经具备的克制沉淀规则：
-
-- 简单任务不会写技能
-- 调用过已有技能不会再写重复技能
-- 只有超过 15 轮且有多次工具调用的成功流程，才会考虑沉淀
-- 每次运行会向 `data/trace.log` 写入一行轨迹摘要
-- 长摘要保留前 200 字和后 200 字，中间用省略号连接
-- CLI 默认显示每轮行动摘要，避免长任务静默等待
-- 工具观察会压缩后再喂给下一轮模型，避免大文件/网页撑爆上下文
-- 可以用 `python -m chrysalis.kernel "复盘最近运行"` 生成复盘报告
-
-后续我们再逐步加：
-
-- 技能验证
-- 失败修复
-- 更强的长期记忆
-- 更准确的技能泛化与去重
-
-## 当前原子工具
-
-- `file_list`：列出文件
-- `file_read`：读取文本文件
-- `file_write`：写入文本文件
-- `web_fetch`：获取网页
-- `code_run`：执行一段短 Python 代码
-
-普通相对路径默认落在 `workspace/`。如果要读取项目资料，可以直接使用 `memory/...`、`data/...`、`skills/...`、`chrysalis/...`、`tests/...` 这类项目相对路径；也可以使用 `../` 或绝对路径访问其他目录。
-
-## 运行复盘
-
-```powershell
-python -m chrysalis.reflect
-```
-
-或者：
-
-```powershell
-python -m chrysalis.kernel "复盘最近运行"
-```
-
-报告会写入 `data/reflections/`，只提供建议，不会自动改记忆或新增技能。
-
-
-
-
-
-
-
-
-
-
+- 工具集精简（10 个），复杂操作通过 code_run 组合
+- Function calling 优先，JSON-in-text 作为 fallback
+- 记忆分层，L1 极简索引每轮注入，按需读取 L2/L3
+- 安全策略：危险 shell 命令拦截、密钥文件保护、代码沙箱
+- 失败升级：1 次→读错误，2 次→探测环境，3 次→换方案或问用户
