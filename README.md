@@ -1,6 +1,6 @@
 # Chrysalis
 
-一个目标为在保证任务完成率的情况下能够尽可能节省token的通用型agent，类似小龙虾，爱马仕
+从 GenericAgent 思路重新搭建的极简自主 agent。架构清晰，能力逐步生长。
 
 ## 快速开始
 
@@ -113,5 +113,4 @@ workspace/           工具默认工作目录
 - 安全策略：危险 shell 命令拦截、密钥文件保护、代码沙箱
 - 失败升级：1 次→读错误，2 次→探测环境，3 次→换方案或问用户
 
-
-![Star History](https://www.star-history.com/?repos=hsdaoqi%2FChrysalis-Agent&type=date&legend=top-left)
+![img.png](img.png)

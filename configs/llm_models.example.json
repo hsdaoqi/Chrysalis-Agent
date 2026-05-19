@@ -1,0 +1,21 @@
+[
+  {
+    "name": "deepseek",
+    "provider": "deepseek",
+    "api_key": "${CHRYSALIS_API_KEY}",
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com",
+    "context_window": 28000,
+    "temperature": 0.2,
+    "max_tokens": 4096
+  },
+  {
+    "name": "claude",
+    "provider": "anthropic",
+    "api_key": "${ANTHROPIC_API_KEY}",
+    "model": "claude-sonnet-4-6",
+    "base_url": "https://api.anthropic.com",
+    "context_window": 100000,
+    "thinking": "disabled"
+  }
+]

@@ -71,6 +71,9 @@ def _compress_message(msg: dict, max_len: int) -> None:
             text = block.get("text", "")
             if len(text) > max_len:
                 block["text"] = _truncate_text(text, max_len)
+        elif btype == "image":
+            block.clear()
+            block.update({"type": "text", "text": "[图片已省略]"})
         elif btype == "tool_use":
             args = block.get("arguments", "")
             if isinstance(args, str) and len(args) > _MAX_TOOL_ARGS:
@@ -82,17 +85,32 @@ def _compress_message(msg: dict, max_len: int) -> None:
 
 
 def _drop_oldest_turn(history: list[dict]) -> None:
-    """删除最旧的一个完整 turn。
+    """删除最旧的一个完整 turn（user + assistant + tool_results）。
 
     保证：
     - 删除后首条仍是 user role
     - 不残留孤立的 tool_result（其对应的 tool_use 已被删）
+    - 不残留孤立的 assistant tool_use（其对应的 tool_result 已被删）
     """
     if not history:
         return
     history.pop(0)
+    # 如果下一条是 assistant（含 tool_use），连同后续的 tool_result user 消息一起删
     while history and history[0].get("role") == "assistant":
+        has_tool_use = any(
+            b.get("type") == "tool_use"
+            for b in history[0].get("blocks", [])
+        )
         history.pop(0)
+        if has_tool_use:
+            # 删掉紧跟的 user 消息（包含 tool_result）
+            if history and history[0].get("role") == "user":
+                blocks = history[0].get("blocks", [])
+                has_tool_result = any(
+                    b.get("type") == "tool_result" for b in blocks
+                )
+                if has_tool_result:
+                    history.pop(0)
     if history and history[0].get("role") == "user":
         _sanitize_leading_message(history[0])
 

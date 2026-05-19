@@ -9,7 +9,12 @@
       "WebSearch",
       "Bash(python -c \"import PIL; print\\('Pillow:', PIL.__version__\\)\")",
       "Bash(python -c \"import mss; print\\('mss:', mss.__version__\\)\")",
-      "Bash(python -c \"import playwright; print\\('playwright available'\\)\")"
+      "Bash(python -c \"import playwright; print\\('playwright available'\\)\")",
+      "Bash(python -c \"from chrysalis.session_store import SessionStore; print\\('session_store OK'\\)\")",
+      "Bash(python -c \"from chrysalis.llm import create_client; print\\('llm OK'\\)\")",
+      "Bash(python -c \"from chrysalis.kernel import Kernel, run_interactive; print\\('kernel OK'\\)\")",
+      "Bash(python -c \"from chrysalis.tui.app import ChrysalisApp; print\\('tui OK'\\)\")",
+      "Bash(python -c \"from textual.widgets import Markdown; print\\('Markdown widget available'\\)\")"
     ]
   }
 }

@@ -145,6 +145,10 @@ def tool_use_block(tool_id: str, name: str, arguments: str) -> dict:
     return {"type": "tool_use", "id": tool_id, "name": name, "arguments": arguments}
 
 
+def image_block(media_type: str, data: str) -> dict:
+    return {"type": "image", "media_type": media_type, "data": data}
+
+
 def tool_result_block(tool_use_id: str, content: str, is_error: bool = False) -> dict:
     return {
         "type": "tool_result",

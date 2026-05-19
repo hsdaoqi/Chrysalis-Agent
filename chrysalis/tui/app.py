@@ -4,7 +4,9 @@ from textual import work, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import ScrollableContainer, Vertical
-from textual.widgets import Static, Input, Collapsible
+from textual.widgets import Static, Input, Collapsible, Markdown, OptionList
+from textual.widgets.option_list import Option
+from textual.screen import ModalScreen
 
 from chrysalis.tui.bridge import AgentBridge
 from chrysalis.tui.events import (
@@ -16,6 +18,83 @@ from chrysalis.tui.events import (
     ToolCallCompleted,
     ToolCallStarted,
 )
+
+SLASH_COMMANDS = [
+    ("/help", "显示帮助信息"),
+    ("/session", "查看会话列表"),
+    ("/session new", "新建会话"),
+    ("/session load <n>", "加载第 n 个会话"),
+    ("/session delete <n>", "删除第 n 个会话"),
+    ("/queue", "查看任务队列"),
+    ("/add <task>", "添加任务到队列"),
+    ("/exit", "退出"),
+]
+
+KEYBINDINGS_HELP = [
+    ("Ctrl+C", "退出"),
+    ("Ctrl+L", "清屏"),
+    ("Ctrl+G", "跳转到历史问题"),
+    ("Tab", "补全 / 命令"),
+    ("Esc", "关闭弹窗"),
+]
+
+
+class JumpScreen(ModalScreen):
+    """Ctrl+G 跳转列表：显示所有用户问题，选择后滚动到对应位置。"""
+
+    CSS = """
+    JumpScreen {
+        align: center middle;
+    }
+    #jump-panel {
+        width: 70%;
+        max-height: 60%;
+        background: #1e1e2e;
+        border: solid #585b70;
+        padding: 1 2;
+    }
+    #jump-title {
+        color: #b4befe;
+        text-style: bold;
+        margin-bottom: 1;
+    }
+    #jump-list {
+        height: 1fr;
+        background: #1e1e2e;
+        scrollbar-size: 1 1;
+    }
+    #jump-list > .option-list--option-highlighted {
+        background: #313244;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "dismiss_jump", show=False),
+    ]
+
+    def __init__(self, items: list[tuple[str, "Static"]]) -> None:
+        super().__init__()
+        self._items = items
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="jump-panel"):
+            yield Static("[#b4befe]Jump to message[/] [#585b70](Enter to select, Esc to cancel)[/]", id="jump-title")
+            options = []
+            for i, (text, _widget) in enumerate(self._items, 1):
+                display = text[:80] + "…" if len(text) > 80 else text
+                options.append(Option(f"[#b4befe]{i}.[/] {display}", id=str(i - 1)))
+            yield OptionList(*options, id="jump-list")
+
+    def on_mount(self) -> None:
+        self.query_one("#jump-list", OptionList).focus()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        idx = int(event.option.id)
+        _, widget = self._items[idx]
+        self.dismiss(widget)
+
+    def action_dismiss_jump(self) -> None:
+        self.dismiss(None)
 
 
 class TurnPanel(Static):
@@ -76,16 +155,24 @@ class TurnPanel(Static):
             self._refresh_detail()
 
     def _make_title(self) -> str:
+        from rich.markup import escape
+        tool = escape(self.tool)
+        args = escape(self.args_brief)
+        summary = escape(self._summary)
         if self._status == "running":
-            return f"[#b4befe]Turn {self.turn_num}[/] [#585b70]│[/] [#89b4fa]⏵[/] [#cdd6f4]{self.tool}[/][#585b70]({self.args_brief})[/] [#585b70]…[/]"
+            return f"[#b4befe]Turn {self.turn_num}[/] [#585b70]│[/] [#89b4fa]⏵[/] [#cdd6f4]{tool}[/][#585b70]({args})[/] [#585b70]…[/]"
         elif self._status == "ok":
-            return f"[#b4befe]Turn {self.turn_num}[/] [#585b70]│[/] [#a6e3a1]✓[/] [#cdd6f4]{self.tool}[/] [#585b70]— {self._summary}[/]"
+            return f"[#b4befe]Turn {self.turn_num}[/] [#585b70]│[/] [#a6e3a1]✓[/] [#cdd6f4]{tool}[/] [#585b70]— {summary}[/]"
         else:
-            return f"[#b4befe]Turn {self.turn_num}[/] [#585b70]│[/] [#f38ba8]✗[/] [#cdd6f4]{self.tool}[/] [#585b70]— {self._summary}[/]"
+            return f"[#b4befe]Turn {self.turn_num}[/] [#585b70]│[/] [#f38ba8]✗[/] [#cdd6f4]{tool}[/] [#585b70]— {summary}[/]"
 
     def _refresh_detail(self) -> None:
         detail = self.query_one(".turn-detail", Static)
-        detail.update("\n".join(self._lines) if self._lines else "[#585b70](empty)[/]")
+        if self._lines:
+            from rich.markup import escape
+            detail.update(escape("\n".join(self._lines)))
+        else:
+            detail.update("[#585b70](empty)[/]")
 
 
 class ChrysalisApp(App):
@@ -140,9 +227,20 @@ class ChrysalisApp(App):
         padding: 0;
         color: #585b70;
     }
+    #autocomplete-hint {
+        height: 1;
+        padding: 0;
+        color: #585b70;
+    }
     .final-answer {
         margin: 1 0 0 0;
         padding: 0 0;
+        color: #cdd6f4;
+    }
+    .final-md {
+        margin: 1 0 0 0;
+        padding: 0;
+        background: transparent;
         color: #cdd6f4;
     }
     .stream-text {
@@ -154,6 +252,7 @@ class ChrysalisApp(App):
     BINDINGS = [
         Binding("ctrl+c", "quit", show=False),
         Binding("ctrl+l", "clear_screen", show=False),
+        Binding("ctrl+g", "jump_to_message", show=False),
     ]
 
     def __init__(self) -> None:
@@ -165,6 +264,8 @@ class ChrysalisApp(App):
         self._turn = 0
         self._current_panel: TurnPanel | None = None
         self._has_final = False
+        self._user_messages: list[tuple[str, Static]] = []
+        self._autocomplete_widget: Static | None = None
 
     def compose(self) -> ComposeResult:
         yield ScrollableContainer(id="scroll")
@@ -188,7 +289,19 @@ class ChrysalisApp(App):
         if not task:
             return
         event.input.clear()
-        self._out(f"[bold #cdd6f4]> {task}[/]")
+        self._dismiss_autocomplete()
+
+        if task.lower() in {"/help", "/h", "/?"}:
+            self._show_help()
+            return
+
+        if task.split()[0].lower() in {"/session", "/sessions", "/s"}:
+            self._handle_session_command(task)
+            return
+
+        msg_widget = Static(f"[bold #cdd6f4]> {task}[/]", markup=True)
+        self.query_one("#scroll").mount(msg_widget)
+        self._user_messages.append((task, msg_widget))
         self._out("")
         self._set_input(False)
         self._turn = 0
@@ -289,9 +402,8 @@ class ChrysalisApp(App):
 
         if final:
             self._out("")
-            self.query_one("#scroll").mount(
-                Static(f"[#cdd6f4]{final}[/]", classes="final-answer", markup=True)
-            )
+            md_widget = Markdown(final, classes="final-md")
+            self.query_one("#scroll").mount(md_widget)
             self._has_final = True
 
         usage_line = self._format_usage(result)
@@ -315,6 +427,143 @@ class ChrysalisApp(App):
 
     def action_clear_screen(self) -> None:
         self.query_one("#scroll", ScrollableContainer).remove_children()
+        self._user_messages.clear()
+
+    def action_jump_to_message(self) -> None:
+        if not self._user_messages:
+            return
+        self.push_screen(JumpScreen(self._user_messages), self._on_jump_selected)
+
+    def _on_jump_selected(self, widget: Static | None) -> None:
+        if widget is None:
+            return
+        widget.scroll_visible(animate=True)
+
+    def _show_help(self) -> None:
+        self._out("[#b4befe bold]Keybindings[/]")
+        for key, desc in KEYBINDINGS_HELP:
+            self._out(f"  [#89b4fa]{key:<10}[/] [#cdd6f4]{desc}[/]")
+        self._out("")
+        self._out("[#b4befe bold]Commands[/]")
+        for cmd, desc in SLASH_COMMANDS:
+            self._out(f"  [#89b4fa]{cmd:<22}[/] [#cdd6f4]{desc}[/]")
+        self._out("")
+
+    # ── Tab autocomplete ──
+
+    def on_key(self, event) -> None:
+        inp = self.query_one("#input", Input)
+        if event.key == "tab" and inp.has_focus:
+            event.prevent_default()
+            event.stop()
+            self._handle_tab_complete()
+        elif event.key == "escape" and self._autocomplete_widget:
+            self._dismiss_autocomplete()
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        text = event.value
+        if text.startswith("/") and len(text) >= 2:
+            self._show_autocomplete(text)
+        else:
+            self._dismiss_autocomplete()
+
+    def _handle_tab_complete(self) -> None:
+        inp = self.query_one("#input", Input)
+        text = inp.value
+        if not text.startswith("/"):
+            return
+        matches = [cmd for cmd, _ in SLASH_COMMANDS if cmd.startswith(text)]
+        if len(matches) == 1:
+            completed = matches[0]
+            if "<" not in completed:
+                completed += " "
+            inp.value = completed
+            inp.cursor_position = len(inp.value)
+            self._dismiss_autocomplete()
+        elif matches:
+            prefix = _common_prefix(matches)
+            if len(prefix) > len(text):
+                inp.value = prefix
+                inp.cursor_position = len(inp.value)
+
+    def _show_autocomplete(self, text: str) -> None:
+        matches = [(cmd, desc) for cmd, desc in SLASH_COMMANDS if cmd.startswith(text)]
+        if not matches:
+            self._dismiss_autocomplete()
+            return
+        lines = "  ".join(f"[#89b4fa]{cmd}[/]" for cmd, _ in matches)
+        hint = f"[#585b70]{lines}[/]"
+        if self._autocomplete_widget is None:
+            self._autocomplete_widget = Static(hint, markup=True, id="autocomplete-hint")
+            bottom = self.query_one("#bottom", Vertical)
+            bottom.mount(self._autocomplete_widget, before=0)
+        else:
+            self._autocomplete_widget.update(hint)
+
+    def _dismiss_autocomplete(self) -> None:
+        if self._autocomplete_widget:
+            self._autocomplete_widget.remove()
+            self._autocomplete_widget = None
+
+    # ── Session command ──
+
+    def _handle_session_command(self, raw: str) -> None:
+        parts = raw.strip().split(maxsplit=2)
+        sub = parts[1].lower() if len(parts) > 1 else ""
+        arg = parts[2] if len(parts) > 2 else ""
+        kernel = self.bridge.kernel
+
+        if sub == "new":
+            sid = kernel.new_session()
+            self._out(f"[#a6e3a1]已创建新会话：{sid}[/]")
+            return
+
+        if sub == "load":
+            sessions = kernel.list_sessions()
+            if not sessions:
+                self._out("[#f9e2af]没有可加载的会话。[/]")
+                return
+            try:
+                idx = int(arg) - 1
+            except (ValueError, TypeError):
+                self._out("[#f38ba8]用法：/session load <编号>[/]")
+                return
+            if idx < 0 or idx >= len(sessions):
+                self._out(f"[#f38ba8]编号无效，范围 1-{len(sessions)}[/]")
+                return
+            s = sessions[idx]
+            kernel.load_session(s["id"])
+            self._out(f"[#a6e3a1]已加载会话：{s['title']} ({s['turns']} turns)[/]")
+            return
+
+        if sub == "delete":
+            sessions = kernel.list_sessions()
+            if not sessions:
+                self._out("[#f9e2af]没有可删除的会话。[/]")
+                return
+            try:
+                idx = int(arg) - 1
+            except (ValueError, TypeError):
+                self._out("[#f38ba8]用法：/session delete <编号>[/]")
+                return
+            if idx < 0 or idx >= len(sessions):
+                self._out(f"[#f38ba8]编号无效，范围 1-{len(sessions)}[/]")
+                return
+            s = sessions[idx]
+            kernel.delete_session(s["id"])
+            self._out(f"[#a6e3a1]已删除会话：{s['title']}[/]")
+            return
+
+        sessions = kernel.list_sessions()
+        if not sessions:
+            self._out("[#585b70]暂无会话记录。/session new 新建会话[/]")
+            return
+        current = kernel.session_store.current_id
+        self._out("[#b4befe]会话列表：[/]")
+        for i, s in enumerate(sessions, 1):
+            marker = " [#a6e3a1]*[/]" if s["id"] == current else ""
+            self._out(f"  [#cdd6f4]{i}.[/] {s['title']}  [#585b70][{s['model']}] {s['turns']}t  {s['updated_at']}[/]{marker}")
+        self._out("[#585b70]  /session load <n> 加载 | /session new 新建 | /session delete <n> 删除[/]")
 
     # ── Helpers ──
 
@@ -413,3 +662,15 @@ class ChrysalisApp(App):
         if elapsed:
             parts.append(_fmt_elapsed(elapsed))
         return f"[{' | '.join(parts)}]"
+
+
+def _common_prefix(strings: list[str]) -> str:
+    if not strings:
+        return ""
+    prefix = strings[0]
+    for s in strings[1:]:
+        while not s.startswith(prefix):
+            prefix = prefix[:-1]
+            if not prefix:
+                return ""
+    return prefix

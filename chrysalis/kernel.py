@@ -10,8 +10,8 @@ from chrysalis import subagent
 from chrysalis.task_queue import TaskQueue
 from configs.config import AgentConfig
 from chrysalis.llm import LLMClient, UsageTracker, create_client
+from chrysalis.session_store import SessionStore
 from utils.progress import ProgressCallback, stderr_progress
-from chrysalis.session import SessionContext
 
 HELP_TEXT = """用法：
   chrysalis [--quiet] <任务>
@@ -29,6 +29,7 @@ HELP_TEXT = """用法：
 """
 
 EXIT_COMMANDS = {"/exit", "/quit", "exit", "quit", "退出", "再见"}
+SESSION_COMMANDS = {"/session", "/sessions", "/s"}
 USER_ACTION_DONE_WORDS = ("已完成", "完成了", "弄好了", "操作好了", "已登录", "登录好了", "登录完成", "继续")
 USER_ACTION_SKIP_WORDS = ("跳过", "不登录", "跳过登录", "换方案", "换公开", "公开来源", "不用这个")
 
@@ -42,16 +43,19 @@ class Kernel:
     ):
         self.config = config or AgentConfig()
         self.progress = progress
-        #TODO 将session变为通过指令自己选要恢复哪一个对话
-        self.session = SessionContext(
-            persist_path=self.config.data_dir / "session.json",
-        )
-        self.session.load()
+        self.session_store = SessionStore(self.config.data_dir / "sessions")
         self.tracker = UsageTracker(
             persist_path=self.config.data_dir / "usage_history.jsonl",
             pricing=self.config.llm.pricing_dict(),
         )
-        self.llm = llm or create_client(self.config.llm.to_session_config(), tracker=self.tracker)
+        self.llm = llm or create_client(
+            self.config.load_session_configs(),
+            tracker=self.tracker,
+            on_history_changed=self.session_store.save,
+        )
+        if llm and not llm._on_history_changed:
+            llm._on_history_changed = self.session_store.save
+        self.session_store.new_session(model=self.active_model_name)
         self.pending_user_action: dict | None = None
         self.history: list[str] = []
         self.loop = AgentLoop(
@@ -73,10 +77,7 @@ class Kernel:
         self._progress(f"开始任务：{run_task}")
 
         try:
-            session_context = self.session.context()
-            if extra_context:
-                session_context = (session_context + "\n\n" + extra_context).strip()
-            result = self.loop.run(run_task, session_context=session_context)
+            result = self.loop.run(run_task, session_context=extra_context)
         except Exception as exc:
             result = {
                 "ok": False,
@@ -92,12 +93,18 @@ class Kernel:
 
         result["elapsed_ms"] = _elapsed_ms(started)
         elapsed = result["elapsed_ms"]
-        model = self.config.llm.model
+        model = self.active_model_name
         self.tracker.end_task(run_task[:100], elapsed, model)
         result["usage"] = self.tracker.task_usage_dict()
         result["usage"]["cost"] = self.tracker.task_cost(model)
-        self.session.remember(run_task, result)
         return result
+
+    @property
+    def active_model_name(self) -> str:
+        session = self.llm.session
+        if hasattr(session, "sessions") and session.sessions:
+            return session.sessions[session._current_idx].config.name
+        return session.config.name
 
     def _progress(self, message: str) -> None:
         if self.progress is not None:
@@ -122,6 +129,25 @@ class Kernel:
                 "用户选择跳过此前需要人为操作的路径。请避开该路径，改用其他可行方案继续原任务。",
             )
         return task, ""
+
+    # ── Session management ──
+
+    def load_session(self, session_id: str) -> None:
+        history = self.session_store.load(session_id)
+        with self.llm.session._lock:
+            self.llm.session.history = history
+
+    def new_session(self) -> str:
+        with self.llm.session._lock:
+            self.llm.session.history.clear()
+        self.history.clear()
+        return self.session_store.new_session(model=self.active_model_name)
+
+    def list_sessions(self) -> list[dict]:
+        return self.session_store.list_sessions()
+
+    def delete_session(self, session_id: str) -> bool:
+        return self.session_store.delete(session_id)
 
 
 def main() -> None:
@@ -166,6 +192,7 @@ def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> No
     """运行一个最小交互循环：一行任务执行一次，直到用户退出。"""
     queue = TaskQueue(kernel.config.data_dir / "task_queue.json")
     output_func("Chrysalis 交互模式。输入 /exit 或 退出 结束。")
+    output_func("  /session — 管理会话  /queue — 管理任务队列")
     pending = queue.pending_count()
     if pending:
         output_func(f"  队列中有 {pending} 个待处理任务。输入回车自动执行，或 /queue 查看。")
@@ -180,6 +207,11 @@ def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> No
         if task.lower() in EXIT_COMMANDS:
             output_func("已退出。")
             return
+
+        cmd_word = task.split()[0].lower() if task else ""
+        if cmd_word in SESSION_COMMANDS:
+            _handle_session_command(kernel, task, output_func)
+            continue
 
         if task.lower() in QUEUE_COMMANDS:
             _show_queue(queue, output_func)
@@ -243,6 +275,66 @@ def _show_queue(queue: TaskQueue, output_func) -> None:
         if status in ("done", "failed") and t.get("result"):
             line += f"  -> {t['result'][:60]}"
         output_func(line)
+
+
+def _handle_session_command(kernel: Kernel, raw: str, output_func) -> None:
+    parts = raw.strip().split(maxsplit=2)
+    sub = parts[1].lower() if len(parts) > 1 else ""
+    arg = parts[2] if len(parts) > 2 else ""
+
+    if sub == "new":
+        sid = kernel.new_session()
+        output_func(f"已创建新会话：{sid}")
+        return
+
+    if sub == "load":
+        sessions = kernel.list_sessions()
+        if not sessions:
+            output_func("没有可加载的会话。")
+            return
+        try:
+            idx = int(arg) - 1
+        except (ValueError, TypeError):
+            output_func("用法：/session load <编号>")
+            return
+        if idx < 0 or idx >= len(sessions):
+            output_func(f"编号无效，范围 1-{len(sessions)}")
+            return
+        s = sessions[idx]
+        kernel.load_session(s["id"])
+        output_func(f"已加载会话：{s['title']} ({s['turns']} turns)")
+        return
+
+    if sub == "delete":
+        sessions = kernel.list_sessions()
+        if not sessions:
+            output_func("没有可删除的会话。")
+            return
+        try:
+            idx = int(arg) - 1
+        except (ValueError, TypeError):
+            output_func("用法：/session delete <编号>")
+            return
+        if idx < 0 or idx >= len(sessions):
+            output_func(f"编号无效，范围 1-{len(sessions)}")
+            return
+        s = sessions[idx]
+        kernel.delete_session(s["id"])
+        output_func(f"已删除会话：{s['title']}")
+        return
+
+    sessions = kernel.list_sessions()
+    if not sessions:
+        output_func("暂无会话记录。")
+        output_func("  /session new — 新建会话")
+        return
+    current = kernel.session_store.current_id
+    output_func("会话列表：")
+    for i, s in enumerate(sessions, 1):
+        marker = " *" if s["id"] == current else ""
+        output_func(f"  {i}. {s['title']}  [{s['model']}] {s['turns']}t  {s['updated_at']}{marker}")
+    output_func("")
+    output_func("  /session load <编号> — 加载  /session new — 新建  /session delete <编号> — 删除")
 
 
 def format_interactive_result(result: dict) -> str:

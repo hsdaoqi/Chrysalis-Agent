@@ -16,6 +16,10 @@ dev = [
 tui = [
     "textual>=0.80.0",
 ]
+vision = [
+    "mss>=9.0.0",
+    "Pillow>=10.0.0",
+]
 
 [project.scripts]
 chrysalis = "chrysalis.kernel:main"

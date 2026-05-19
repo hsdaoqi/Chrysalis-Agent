@@ -45,6 +45,15 @@ def to_anthropic_messages(history: list[dict]) -> list[dict]:
                     "name": block.get("name", ""),
                     "input": _parse_arguments(block.get("arguments", "")),
                 })
+            elif btype == "image":
+                content_blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": block.get("media_type", "image/jpeg"),
+                        "data": block.get("data", ""),
+                    },
+                })
             elif btype == "tool_result":
                 entry: dict = {
                     "type": "tool_result",
@@ -105,12 +114,20 @@ def to_openai_messages(history: list[dict], system: str = "") -> list[dict]:
             out.append(entry)
             continue
 
-        # user 角色：tool_result 拆成独立 role:tool 消息，其余文本合并
+        # user 角色：tool_result 拆成独立 role:tool 消息，其余文本/图片合并
         text_parts: list[str] = []
+        image_parts: list[dict] = []
         for block in blocks:
             btype = block.get("type", "")
             if btype == "text":
                 text_parts.append(block.get("text", ""))
+            elif btype == "image":
+                image_parts.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{block.get('media_type', 'image/jpeg')};base64,{block.get('data', '')}",
+                    },
+                })
             elif btype == "tool_result":
                 # 先 flush 累积的 user 文本（保持顺序）
                 if text_parts:
@@ -123,15 +140,55 @@ def to_openai_messages(history: list[dict], system: str = "") -> list[dict]:
                     "tool_call_id": block.get("tool_use_id", ""),
                     "content": block.get("content", ""),
                 })
-        if text_parts:
+        if text_parts or image_parts:
             text = "".join(text_parts).strip()
-            if text:
+            if image_parts:
+                content: list[dict] = []
+                if text:
+                    content.append({"type": "text", "text": text})
+                content.extend(image_parts)
+                out.append({"role": "user", "content": content})
+            elif text:
                 out.append({"role": "user", "content": text})
 
-    return out
+    return _sanitize_tool_pairs(out)
 
 
 # ── helpers ──
+
+def _sanitize_tool_pairs(messages: list[dict]) -> list[dict]:
+    """确保每个 assistant tool_calls 都有对应的 tool 响应。
+
+    OpenAI API 要求 assistant message 中的每个 tool_call_id 必须紧跟
+    对应的 role:tool 消息。如果 context 裁剪导致 tool 消息丢失，
+    这里补一个空响应避免 400 错误。
+    """
+    result: list[dict] = []
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        result.append(msg)
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            expected_ids = {tc["id"] for tc in msg["tool_calls"]}
+            # 收集紧随其后的 tool 消息
+            j = i + 1
+            answered_ids: set[str] = set()
+            while j < len(messages) and messages[j].get("role") == "tool":
+                answered_ids.add(messages[j].get("tool_call_id", ""))
+                result.append(messages[j])
+                j += 1
+            # 补齐缺失的 tool 响应
+            for tid in expected_ids - answered_ids:
+                result.append({
+                    "role": "tool",
+                    "tool_call_id": tid,
+                    "content": "[结果已省略]",
+                })
+            i = j
+        else:
+            i += 1
+    return result
+
 
 def _parse_arguments(arguments: str) -> dict:
     """canonical 里 arguments 是字符串，Anthropic 协议要 dict 形态的 input。"""

@@ -107,9 +107,13 @@ class AgentLoop:
 
                 # 下一轮：传 tool_result 回去
                 obs_text = dumps_observation(compact)
+                images = []
+                if isinstance(observation, dict) and observation.get("_image"):
+                    images.append(observation["_image"])
                 messages = [{
                     "role": "user",
                     "content": obs_text,
+                    "images": images,
                     "tool_results": [{
                         "tool_use_id": tc.id,
                         "content": obs_text,

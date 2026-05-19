@@ -104,4 +104,4 @@ class AgentBridge:
 
     @property
     def model_name(self) -> str:
-        return self.kernel.config.llm.model
+        return self.kernel.active_model_name

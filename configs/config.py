@@ -1,6 +1,8 @@
 """项目路径和运行时配置。"""
 
+import json
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -135,3 +137,57 @@ class AgentConfig:
     @property
     def l4_session_dir(self) -> Path:
         return self.data_dir / "l4_session"
+
+    def load_session_configs(self) -> "list":
+        """加载多模型配置，返回 SessionConfig 列表。
+
+        优先读取 configs/llm_models.json；不存在则回退到单模型 .env 配置。
+        JSON 中的字符串值支持 ${ENV_VAR} 语法引用环境变量。
+        """
+        from chrysalis.llm.types import SessionConfig
+
+        models_path = PROJECT_ROOT / "configs" / "llm_models.json"
+        if not models_path.exists():
+            return [self.llm.to_session_config()]
+
+        raw = models_path.read_text(encoding="utf-8")
+        models = json.loads(raw)
+        if not isinstance(models, list) or not models:
+            return [self.llm.to_session_config()]
+
+        configs = []
+        for entry in models:
+            entry = _expand_env_vars(entry)
+            provider = (entry.get("provider") or "openai").strip().lower()
+            protocol = "anthropic" if provider in {"anthropic", "claude"} else "openai"
+            base_url = entry.get("base_url") or _default_llm_base_url(provider)
+            base_url = _normalize_llm_base_url(provider, base_url)
+            model = entry.get("model") or _default_llm_model(provider)
+
+            configs.append(SessionConfig(
+                api_key=entry.get("api_key", ""),
+                base_url=base_url,
+                model=model,
+                protocol=protocol,
+                context_window=int(entry.get("context_window", 28000)),
+                temperature=float(entry.get("temperature", 0.2)),
+                max_tokens=int(entry.get("max_tokens", 4096)) if entry.get("max_tokens") else None,
+                max_retries=int(entry.get("max_retries", 4)),
+                read_timeout=int(entry.get("timeout", 60)),
+                proxy=entry.get("proxy") or None,
+                thinking=entry.get("thinking", "disabled"),
+                thinking_budget=int(entry.get("thinking_budget")) if entry.get("thinking_budget") else None,
+                name=entry.get("name") or model,
+            ))
+        return configs
+
+
+def _expand_env_vars(obj):
+    """递归展开字典/列表中字符串值里的 ${ENV_VAR} 引用。"""
+    if isinstance(obj, str):
+        return re.sub(r"\$\{(\w+)\}", lambda m: os.getenv(m.group(1), ""), obj)
+    if isinstance(obj, dict):
+        return {k: _expand_env_vars(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_expand_env_vars(item) for item in obj]
+    return obj

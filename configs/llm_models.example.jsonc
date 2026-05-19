@@ -1,0 +1,84 @@
+// ============================================================================
+//  Chrysalis 多模型配置模板
+//  复制本文件为 llm_models.json，填入你的 API Key 即可使用。
+//
+//  规则：
+//  - 数组中可以放 1~N 个模型，顺序 = 优先级（第一个是主力模型）
+//  - 主力模型请求失败时自动切到下一个，300秒后尝试回切
+//  - 只配一个模型也完全可以，不会启用 failover
+//  - 字符串值支持 ${ENV_VAR} 引用 .env 中的环境变量
+//  - 不创建此文件时，系统回退到 .env 中的单模型配置
+//
+//  注意：实际使用时请删除所有注释（JSON 标准不支持注释），
+//       或者直接复制下方"干净版"到 llm_models.json
+// ============================================================================
+[
+  // ── 示例 1：DeepSeek（OpenAI 兼容协议） ──
+  {
+    // -------- 必填 --------
+    "name": "deepseek",              // 显示名称，随便起，用于日志和识别
+    "provider": "deepseek",          // 决定协议和默认地址，见下方"provider 可选值"
+    "api_key": "${CHRYSALIS_API_KEY}", // API 密钥，建议用 ${} 引用环境变量
+    "model": "deepseek-chat",        // 模型 ID
+
+    // -------- 选填（有合理默认值） --------
+    "base_url": "https://api.deepseek.com",  // API 地址，不填则按 provider 自动推断
+    "context_window": 28000,         // 上下文窗口 token 数，默认 28000
+    "temperature": 0.2,              // 生成温度 0~2，默认 0.2
+    "max_tokens": 4096,              // 单次最大输出 token，默认 4096
+    "max_retries": 4,                // 单模型内重试次数，默认 4
+    "timeout": 60,                   // 读取超时秒数，默认 60
+    "proxy": ""                      // HTTP 代理，如 "http://127.0.0.1:7890"，不需要留空
+  },
+
+  // ── 示例 2：Claude（Anthropic 原生协议） ──
+  {
+    "name": "claude",
+    "provider": "anthropic",         // anthropic/claude → 使用 Anthropic 协议
+    "api_key": "${ANTHROPIC_API_KEY}",
+    "model": "claude-sonnet-4-6",
+    "base_url": "https://api.anthropic.com", // Anthropic 官方地址
+    "context_window": 100000,
+
+    // -------- Anthropic 专属选项 --------
+    "thinking": "disabled",          // 扩展思考：disabled / enabled / adaptive
+    "thinking_budget": null           // thinking=enabled 时必填，token 预算，如 32768
+  },
+
+  // ── 示例 3：OpenAI ──
+  {
+    "name": "gpt",
+    "provider": "openai",
+    "api_key": "${OPENAI_API_KEY}",
+    "model": "gpt-4o",
+    "base_url": "https://api.openai.com/v1",
+    "context_window": 128000
+  },
+
+  // ── 示例 4：任意 OpenAI 兼容中转站 ──
+  {
+    "name": "relay",
+    "provider": "openai",            // 只要兼容 OpenAI 格式就填 openai
+    "api_key": "sk-your-relay-key",
+    "model": "claude-3-haiku",       // 中转站提供的模型名
+    "base_url": "https://your-relay.com/v1",
+    "context_window": 100000
+  }
+]
+
+// ============================================================================
+//  provider 可选值：
+//    "deepseek" / "ds"     → OpenAI 协议，默认地址 https://api.deepseek.com
+//    "openai"              → OpenAI 协议，默认地址 https://api.openai.com/v1
+//    "anthropic" / "claude"→ Anthropic 协议，默认地址 https://api.anthropic.com
+//    其他任意值            → 当作 OpenAI 协议，必须手动填 base_url
+//
+//  thinking 选项（仅 Anthropic 协议有效）：
+//    "disabled"  → 不使用扩展思考（默认）
+//    "adaptive"  → 模型自行决定是否思考
+//    "enabled"   → 强制思考，此时必须填 thinking_budget
+//
+//  环境变量引用：
+//    字符串中的 ${VAR_NAME} 会被替换为 .env 或系统环境变量的值
+//    例如 "api_key": "${MY_KEY}" → 读取环境变量 MY_KEY
+// ============================================================================
