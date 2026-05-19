@@ -114,4 +114,4 @@ workspace/           工具默认工作目录
 - 失败升级：1 次→读错误，2 次→探测环境，3 次→换方案或问用户
 
 
-![Activity](https://activity-graph.herokuapp.com/graph?username=hsdaoqi)
+![Star History](https://www.star-history.com/?repos=hsdaoqi%2FChrysalis-Agent&type=date&legend=top-left)
