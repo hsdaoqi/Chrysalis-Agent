@@ -112,3 +112,6 @@ workspace/           工具默认工作目录
 - 记忆分层，L1 极简索引每轮注入，按需读取 L2/L3
 - 安全策略：危险 shell 命令拦截、密钥文件保护、代码沙箱
 - 失败升级：1 次→读错误，2 次→探测环境，3 次→换方案或问用户
+
+
+![Activity](https://activity-graph.herokuapp.com/graph?username=hsdaoqi)
