@@ -1,4 +1,8 @@
-"""LLM 会话管理：history 持久化、上下文裁剪、流式调用生命周期。"""
+"""LLM 会话管理：history 持久化、上下文裁剪、流式调用生命周期。
+
+history 内部统一使用 canonical block 格式（见 chrysalis/llm/types.py）。
+发送给 provider 时由 protocols 模块转换为协议特定的 wire format。
+"""
 
 import threading
 from typing import Generator
@@ -6,7 +10,8 @@ from typing import Generator
 from chrysalis.llm.claude_stream import claude_stream
 from chrysalis.llm.context import trim_messages_history
 from chrysalis.llm.openai_stream import openai_stream
-from chrysalis.llm.types import Response, SessionConfig, ToolCall
+from chrysalis.llm.protocols import to_anthropic_messages, to_openai_messages
+from chrysalis.llm.types import Response, SessionConfig
 
 
 class BaseSession:
@@ -16,8 +21,9 @@ class BaseSession:
         gen = session.ask(message)
         for chunk in gen:  # yield 文本块
             print(chunk, end="")
-        response = gen.value  # 不可用，需用 try/except StopIteration
-    实际使用时通过 exhaust_generator() 或 yield from 获取 Response。
+        # 实际取 Response 需 try/except StopIteration 或 yield from
+
+    history 中每条消息为 canonical 格式：{"role", "blocks", "_compressed"}。
     """
 
     def __init__(self, config: SessionConfig):
@@ -28,18 +34,13 @@ class BaseSession:
         self._lock = threading.Lock()
 
     def ask(self, message: dict) -> Generator[str, None, Response]:
-        """追加 message 到 history，流式调用 LLM，返回 Response。
-
-        Generator protocol:
-            yield -> str (文本块，用于流式显示)
-            return -> Response (通过 StopIteration.value)
-        """
+        """追加 canonical message 到 history，流式调用 LLM，返回 Response。"""
         with self._lock:
             self.history.append(message)
             trim_messages_history(self.history, self.config.context_window)
-            messages = [dict(m) for m in self.history]
+            history_snapshot = [dict(m) for m in self.history]
 
-        gen = self._raw_ask(messages)
+        gen = self._raw_ask(history_snapshot)
         response: Response | None = None
         try:
             while True:
@@ -56,31 +57,36 @@ class BaseSession:
 
         return response
 
-    def _raw_ask(self, messages: list[dict]) -> Generator[str, None, Response]:
-        """根据协议分发到对应的流式解析器。"""
+    def _raw_ask(self, history: list[dict]) -> Generator[str, None, Response]:
+        """根据协议把 canonical history 转 wire format 后分发到对应 stream。"""
         if self.config.protocol == "anthropic":
+            messages = to_anthropic_messages(history)
             return claude_stream(self.config, messages, self.system, self.tools)
-        return openai_stream(self.config, messages, self.system, self.tools)
+        messages = to_openai_messages(history, self.system)
+        return openai_stream(self.config, messages, "", self.tools)
 
     def _append_assistant(self, response: Response) -> None:
-        """将 assistant 响应追加到 history。"""
+        """将 assistant 响应作为 canonical message 追加到 history。"""
+        blocks: list[dict] = []
+        if response.thinking and response.thinking_signature:
+            blocks.append({
+                "type": "thinking",
+                "text": response.thinking,
+                "signature": response.thinking_signature,
+            })
+        if response.content:
+            blocks.append({"type": "text", "text": response.content})
+        for tc in response.tool_calls:
+            blocks.append({
+                "type": "tool_use",
+                "id": tc.id,
+                "name": tc.name,
+                "arguments": tc.arguments,
+            })
+        if not blocks:
+            return
         with self._lock:
-            if response.tool_calls:
-                content_blocks = []
-                if response.thinking:
-                    content_blocks.append({"type": "thinking", "thinking": response.thinking})
-                if response.content:
-                    content_blocks.append({"type": "text", "text": response.content})
-                for tc in response.tool_calls:
-                    content_blocks.append({
-                        "type": "tool_use",
-                        "id": tc.id,
-                        "name": tc.name,
-                        "input": tc.arguments,
-                    })
-                self.history.append({"role": "assistant", "content": content_blocks})
-            else:
-                self.history.append({"role": "assistant", "content": response.content})
+            self.history.append({"role": "assistant", "blocks": blocks})
 
     def clear_history(self) -> None:
         with self._lock:

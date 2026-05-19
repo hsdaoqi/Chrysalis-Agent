@@ -31,6 +31,10 @@ class LLMConfig:
     context_window: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_CONTEXT_WINDOW", "28000")))
     max_retries: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MAX_RETRIES", "4")))
     proxy: str = field(default_factory=lambda: os.getenv("CHRYSALIS_PROXY", ""))
+    input_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_INPUT_PRICE", "0")))
+    output_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_OUTPUT_PRICE", "0")))
+    cache_read_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_READ_PRICE", "0")))
+    cache_write_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_WRITE_PRICE", "0")))
 
     def __post_init__(self) -> None:
         self.provider = (self.provider or "deepseek").strip().lower()
@@ -57,6 +61,17 @@ class LLMConfig:
             proxy=self.proxy or None,
             name=self.model,
         )
+
+    def pricing_dict(self) -> dict[str, float] | None:
+        """返回每百万 token 的价格配置，全为 0 时返回 None（使用内置默认值）。"""
+        if not any([self.input_price, self.output_price, self.cache_read_price, self.cache_write_price]):
+            return None
+        return {
+            "input": self.input_price,
+            "output": self.output_price,
+            "cache_read": self.cache_read_price,
+            "cache_write": self.cache_write_price,
+        }
 
 
 def _default_llm_provider() -> str:

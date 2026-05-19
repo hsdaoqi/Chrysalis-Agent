@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs grep *)",
+      "Bash(python -c \"from chrysalis.llm import LLMClient, Usage; from chrysalis.kernel import Kernel, format_interactive_result; print\\('OK'\\)\")",
+      "Bash(python -c \"from chrysalis.llm import UsageTracker, Usage, LLMClient, create_client; print\\('imports OK'\\)\")",
+      "Bash(python -c \"from chrysalis.tui.app import ChrysalisApp; print\\('TUI import OK'\\)\")",
+      "Bash(python -c ' *)",
+      "WebSearch",
+      "Bash(python -c \"import PIL; print\\('Pillow:', PIL.__version__\\)\")",
+      "Bash(python -c \"import mss; print\\('mss:', mss.__version__\\)\")",
+      "Bash(python -c \"import playwright; print\\('playwright available'\\)\")"
+    ]
+  }
+}

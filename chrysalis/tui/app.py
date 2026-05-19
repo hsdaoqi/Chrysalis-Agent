@@ -294,6 +294,10 @@ class ChrysalisApp(App):
             )
             self._has_final = True
 
+        usage_line = self._format_usage(result)
+        if usage_line:
+            self._out(f"[#585b70]{usage_line}[/]")
+
         if result.get("need_user"):
             self._out(f"[#f9e2af]⏸ Waiting for input…[/]")
 
@@ -390,3 +394,22 @@ class ChrysalisApp(App):
             else:
                 lines.append(f"[#585b70]{line}[/]")
         return lines
+
+    def _format_usage(self, result: dict) -> str:
+        usage = result.get("usage")
+        if not usage or not usage.get("total_tokens"):
+            return ""
+        from chrysalis.llm.types import Usage, _fmt_num
+        from chrysalis.llm.usage import _fmt_elapsed
+        u = Usage.from_dict(usage)
+        elapsed = result.get("elapsed_ms", 0)
+        cost = usage.get("cost", 0)
+        turns = usage.get("turns", 0)
+        parts = [u.format()]
+        if cost > 0:
+            parts.append(f"~${cost:.4f}")
+        if turns:
+            parts.append(f"{turns} turns")
+        if elapsed:
+            parts.append(_fmt_elapsed(elapsed))
+        return f"[{' | '.join(parts)}]"

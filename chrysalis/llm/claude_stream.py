@@ -9,7 +9,7 @@ from typing import Generator
 import requests
 
 from chrysalis.llm.openai_stream import stream_with_retry
-from chrysalis.llm.types import Response, SessionConfig, ToolCall
+from chrysalis.llm.types import Response, SessionConfig, ToolCall, Usage
 
 
 def claude_stream(
@@ -18,7 +18,10 @@ def claude_stream(
     system: str,
     tools: list[dict] | None,
 ) -> Generator[str, None, Response]:
-    """发起 Anthropic messages 流式请求，yield 文本块，return Response。"""
+    """发起 Anthropic messages 流式请求，yield 文本块，return Response。
+
+    messages 必须是已转换为 Anthropic wire format 的数组（见 protocols.to_anthropic_messages）。
+    """
     url = f"{config.base_url}/messages"
     headers = {
         "x-api-key": config.api_key,
@@ -83,10 +86,12 @@ def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, 
     """
     content_parts: list[str] = []
     thinking_parts: list[str] = []
+    thinking_signature = ""
     tool_calls: list[ToolCall] = []
     current_block_type: str = ""
     current_tool: dict | None = None
     stop_reason = "end_turn"
+    usage = Usage()
 
     event_type = ""
     for raw_line in http_response.iter_lines():
@@ -104,7 +109,14 @@ def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, 
         except json.JSONDecodeError:
             continue
 
-        if event_type == "content_block_start":
+        if event_type == "message_start":
+            msg = data.get("message", {})
+            u = msg.get("usage", {})
+            usage.prompt_tokens = u.get("input_tokens", 0)
+            usage.cache_read_tokens = u.get("cache_read_input_tokens", 0)
+            usage.cache_creation_tokens = u.get("cache_creation_input_tokens", 0)
+
+        elif event_type == "content_block_start":
             block = data.get("content_block", {})
             current_block_type = block.get("type", "")
             if current_block_type == "tool_use":
@@ -123,6 +135,8 @@ def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, 
                 yield text
             elif delta_type == "thinking_delta":
                 thinking_parts.append(delta.get("thinking", ""))
+            elif delta_type == "signature_delta":
+                thinking_signature += delta.get("signature", "")
             elif delta_type == "input_json_delta":
                 if current_tool is not None:
                     current_tool["arguments"] += delta.get("partial_json", "")
@@ -141,6 +155,9 @@ def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, 
             delta = data.get("delta", {})
             if delta.get("stop_reason"):
                 stop_reason = delta["stop_reason"]
+            u = data.get("usage", {})
+            if u:
+                usage.completion_tokens = u.get("output_tokens", 0)
 
         elif event_type == "message_stop":
             break
@@ -154,11 +171,14 @@ def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, 
     if tool_calls:
         stop_reason = "tool_use"
 
+    usage.total_tokens = usage.prompt_tokens + usage.completion_tokens
     content = "".join(content_parts)
     return Response(
         content=content,
         thinking="".join(thinking_parts),
+        thinking_signature=thinking_signature,
         tool_calls=tool_calls,
         raw=content,
         stop_reason=stop_reason,
+        usage=usage,
     )

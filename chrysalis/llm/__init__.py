@@ -8,7 +8,8 @@ from chrysalis.llm.client import LLMClient
 from chrysalis.llm.context import compress_history_tags, trim_messages_history
 from chrysalis.llm.failover import FailoverSession
 from chrysalis.llm.session import BaseSession
-from chrysalis.llm.types import Response, SessionConfig, ToolCall
+from chrysalis.llm.types import Response, SessionConfig, ToolCall, Usage
+from chrysalis.llm.usage import UsageTracker
 
 __all__ = [
     "BaseSession",
@@ -17,6 +18,8 @@ __all__ = [
     "Response",
     "SessionConfig",
     "ToolCall",
+    "Usage",
+    "UsageTracker",
     "compress_history_tags",
     "trim_messages_history",
 ]
@@ -27,11 +30,11 @@ def create_session(config: SessionConfig) -> BaseSession:
     return BaseSession(config)
 
 
-def create_client(configs: list[SessionConfig] | SessionConfig) -> LLMClient:
+def create_client(configs: list[SessionConfig] | SessionConfig, tracker: UsageTracker | None = None) -> LLMClient:
     """便捷工厂：单配置创建普通 client，多配置创建 failover client。"""
     if isinstance(configs, SessionConfig):
-        return LLMClient(BaseSession(configs))
+        return LLMClient(BaseSession(configs), tracker=tracker)
     sessions = [BaseSession(c) for c in configs]
     if len(sessions) == 1:
-        return LLMClient(sessions[0])
-    return LLMClient(FailoverSession(sessions))
+        return LLMClient(sessions[0], tracker=tracker)
+    return LLMClient(FailoverSession(sessions), tracker=tracker)

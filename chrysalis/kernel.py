@@ -9,7 +9,7 @@ from chrysalis.agent_loop import AgentLoop
 from chrysalis import subagent
 from chrysalis.task_queue import TaskQueue
 from configs.config import AgentConfig
-from chrysalis.llm import LLMClient, create_client
+from chrysalis.llm import LLMClient, UsageTracker, create_client
 from utils.progress import ProgressCallback, stderr_progress
 from chrysalis.session import SessionContext
 
@@ -42,11 +42,16 @@ class Kernel:
     ):
         self.config = config or AgentConfig()
         self.progress = progress
+        #TODO 将session变为通过指令自己选要恢复哪一个对话
         self.session = SessionContext(
             persist_path=self.config.data_dir / "session.json",
         )
         self.session.load()
-        self.llm = llm or create_client(self.config.llm.to_session_config())
+        self.tracker = UsageTracker(
+            persist_path=self.config.data_dir / "usage_history.jsonl",
+            pricing=self.config.llm.pricing_dict(),
+        )
+        self.llm = llm or create_client(self.config.llm.to_session_config(), tracker=self.tracker)
         self.pending_user_action: dict | None = None
         self.history: list[str] = []
         self.loop = AgentLoop(
@@ -63,6 +68,7 @@ class Kernel:
 
     def run(self, task: str) -> dict:
         started = time.perf_counter()
+        self.llm.reset_task_usage()
         run_task, extra_context = self._resolve_pending_user_action(task)
         self._progress(f"开始任务：{run_task}")
 
@@ -85,6 +91,11 @@ class Kernel:
             }
 
         result["elapsed_ms"] = _elapsed_ms(started)
+        elapsed = result["elapsed_ms"]
+        model = self.config.llm.model
+        self.tracker.end_task(run_task[:100], elapsed, model)
+        result["usage"] = self.tracker.task_usage_dict()
+        result["usage"]["cost"] = self.tracker.task_cost(model)
         self.session.remember(run_task, result)
         return result
 
@@ -236,11 +247,33 @@ def _show_queue(queue: TaskQueue, output_func) -> None:
 
 def format_interactive_result(result: dict) -> str:
     """把一次运行结果压成适合终端阅读的输出。"""
+    parts: list[str] = []
     if "final" in result:
-        return str(result["final"])
-    if "error" in result:
-        return f"出错：{result['error']}"
-    return json.dumps(result, ensure_ascii=False, indent=2, default=str)
+        parts.append(str(result["final"]))
+    elif "error" in result:
+        parts.append(f"出错：{result['error']}")
+    else:
+        parts.append(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+
+    usage = result.get("usage")
+    if usage and usage.get("total_tokens"):
+        from chrysalis.llm.types import Usage, _fmt_num
+        from chrysalis.llm.usage import _fmt_elapsed
+        u = Usage.from_dict(usage)
+        elapsed = result.get("elapsed_ms", 0)
+        cost = usage.get("cost", 0)
+        turns = usage.get("turns", 0)
+
+        info_parts = [u.format()]
+        if cost > 0:
+            info_parts.append(f"~${cost:.4f}")
+        if turns:
+            info_parts.append(f"{turns} turns")
+        if elapsed:
+            info_parts.append(_fmt_elapsed(elapsed))
+        parts.append(f"[{' | '.join(info_parts)}]")
+
+    return "\n".join(parts)
 
 
 def _elapsed_ms(started: float) -> int:

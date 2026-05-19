@@ -9,7 +9,7 @@ from typing import Generator
 
 import requests
 
-from chrysalis.llm.types import Response, SessionConfig, ToolCall
+from chrysalis.llm.types import Response, SessionConfig, ToolCall, Usage
 
 RETRYABLE_STATUS = {408, 429, 500, 502, 503, 504, 529}
 
@@ -20,29 +20,33 @@ def openai_stream(
     system: str,
     tools: list[dict] | None,
 ) -> Generator[str, None, Response]:
-    """发起 OpenAI chat/completions 流式请求，yield 文本块，return Response。"""
+    """发起 OpenAI chat/completions 流式请求，yield 文本块，return Response。
+
+    messages 必须是已转换为 OpenAI wire format 的数组（见 protocols.to_openai_messages），
+    system prompt 已经在转换时被合并为首条 system message，本函数不再追加。
+    """
     url = f"{config.base_url}/chat/completions"
     headers = {
         "Authorization": f"Bearer {config.api_key}",
         "Content-Type": "application/json",
     }
-    payload = _build_payload(config, messages, system, tools)
+    payload = _build_payload(config, messages, tools)
     return (yield from stream_with_retry(config, url, headers, payload, _parse_openai_sse))
 
 
 def _build_payload(
     config: SessionConfig,
     messages: list[dict],
-    system: str,
     tools: list[dict] | None,
 ) -> dict:
-    full_messages = _prepend_system(messages, system)
     payload: dict = {
         "model": config.model,
-        "messages": full_messages,
+        "messages": messages,
         "stream": config.stream,
         "temperature": config.temperature,
     }
+    if config.stream:
+        payload["stream_options"] = {"include_usage": True}
     if config.max_tokens:
         payload["max_tokens"] = config.max_tokens
     if tools:
@@ -50,18 +54,12 @@ def _build_payload(
     return payload
 
 
-def _prepend_system(messages: list[dict], system: str) -> list[dict]:
-    """将 system prompt 作为首条 system message 插入。"""
-    if not system:
-        return messages
-    return [{"role": "system", "content": system}] + messages
-
-
 def _parse_openai_sse(http_response: requests.Response) -> Generator[str, None, Response]:
     """解析 OpenAI SSE 流，提取 content delta 和 tool_calls。"""
     content_parts: list[str] = []
     tool_calls_map: dict[int, dict] = {}
     reasoning_parts: list[str] = []
+    usage = Usage()
 
     for raw_line in http_response.iter_lines():
         if not raw_line:
@@ -76,6 +74,15 @@ def _parse_openai_sse(http_response: requests.Response) -> Generator[str, None, 
             chunk = json.loads(data)
         except json.JSONDecodeError:
             continue
+
+        if "usage" in chunk and chunk["usage"]:
+            u = chunk["usage"]
+            usage = Usage(
+                prompt_tokens=u.get("prompt_tokens", 0),
+                completion_tokens=u.get("completion_tokens", 0),
+                total_tokens=u.get("total_tokens", 0),
+                cache_read_tokens=u.get("prompt_tokens_details", {}).get("cached_tokens", 0),
+            )
 
         choices = chunk.get("choices")
         if not choices:
@@ -111,7 +118,7 @@ def _parse_openai_sse(http_response: requests.Response) -> Generator[str, None, 
     content = "".join(content_parts)
     thinking = "".join(reasoning_parts)
     stop = "tool_use" if tool_calls else "end_turn"
-    return Response(content=content, thinking=thinking, tool_calls=tool_calls, raw=content, stop_reason=stop)
+    return Response(content=content, thinking=thinking, tool_calls=tool_calls, raw=content, stop_reason=stop, usage=usage)
 
 
 # ── 通用流式重试 ──
