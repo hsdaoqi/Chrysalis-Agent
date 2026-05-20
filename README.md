@@ -113,4 +113,4 @@ workspace/           工具默认工作目录
 - 安全策略：危险 shell 命令拦截、密钥文件保护、代码沙箱
 - 失败升级：1 次→读错误，2 次→探测环境，3 次→换方案或问用户
 
-![img.png](img.png)
+![img_1.png](assets/images/img_1.png)
