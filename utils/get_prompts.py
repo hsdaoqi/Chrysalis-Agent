@@ -2,10 +2,11 @@ import os, time
 from configs.config import PROJECT_ROOT
 
 
-def get_system_prompt():
+def get_system_prompt(include_memory: bool = True):
     with open(os.path.join(PROJECT_ROOT, 'assets/system_prompt.txt'), 'r', encoding='utf-8') as f: prompt = f.read()
     prompt += f"\nToday: {time.strftime('%Y-%m-%d %a')}\n"
-    prompt += get_global_memory()
+    if include_memory:
+        prompt += get_global_memory()
     return prompt
 
 

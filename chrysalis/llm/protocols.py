@@ -157,35 +157,51 @@ def to_openai_messages(history: list[dict], system: str = "") -> list[dict]:
 # ── helpers ──
 
 def _sanitize_tool_pairs(messages: list[dict]) -> list[dict]:
-    """确保每个 assistant tool_calls 都有对应的 tool 响应。
+    """只保留仍然成对的 OpenAI tool_call/tool 消息。
 
-    OpenAI API 要求 assistant message 中的每个 tool_call_id 必须紧跟
-    对应的 role:tool 消息。如果 context 裁剪导致 tool 消息丢失，
-    这里补一个空响应避免 400 错误。
+    OpenAI 要求 assistant tool_calls 后面紧跟对应 role:tool 消息。
+    如果 compact 或加载旧会话打断了配对，移除断裂的协议块，不伪造结果。
     """
     result: list[dict] = []
     i = 0
     while i < len(messages):
         msg = messages[i]
-        result.append(msg)
+        if msg.get("role") == "tool":
+            i += 1
+            continue
+
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
-            expected_ids = {tc["id"] for tc in msg["tool_calls"]}
-            # 收集紧随其后的 tool 消息
+            expected = {
+                tc.get("id"): tc
+                for tc in msg.get("tool_calls", [])
+                if tc.get("id")
+            }
             j = i + 1
+            tool_messages: list[dict] = []
             answered_ids: set[str] = set()
             while j < len(messages) and messages[j].get("role") == "tool":
-                answered_ids.add(messages[j].get("tool_call_id", ""))
-                result.append(messages[j])
+                tid = messages[j].get("tool_call_id", "")
+                if tid in expected:
+                    answered_ids.add(tid)
+                    tool_messages.append(messages[j])
                 j += 1
-            # 补齐缺失的 tool 响应
-            for tid in expected_ids - answered_ids:
-                result.append({
-                    "role": "tool",
-                    "tool_call_id": tid,
-                    "content": "[结果已省略]",
-                })
+
+            kept_calls = [
+                tc for tc in msg.get("tool_calls", [])
+                if tc.get("id") in answered_ids
+            ]
+            entry = dict(msg)
+            if kept_calls:
+                entry["tool_calls"] = kept_calls
+                result.append(entry)
+                result.extend(tool_messages)
+            else:
+                entry.pop("tool_calls", None)
+                if entry.get("content"):
+                    result.append(entry)
             i = j
         else:
+            result.append(msg)
             i += 1
     return result
 

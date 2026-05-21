@@ -14,7 +14,9 @@
       "Bash(python -c \"from chrysalis.llm import create_client; print\\('llm OK'\\)\")",
       "Bash(python -c \"from chrysalis.kernel import Kernel, run_interactive; print\\('kernel OK'\\)\")",
       "Bash(python -c \"from chrysalis.tui.app import ChrysalisApp; print\\('tui OK'\\)\")",
-      "Bash(python -c \"from textual.widgets import Markdown; print\\('Markdown widget available'\\)\")"
+      "Bash(python -c \"from textual.widgets import Markdown; print\\('Markdown widget available'\\)\")",
+      "Bash(python -c \"from chrysalis.llm.context import trim_messages_history, compress_history_tags; print\\('OK'\\)\")",
+      "Bash(python -c \"from chrysalis.tui.events import VoiceResult; print\\('events OK'\\)\")"
     ]
   }
 }

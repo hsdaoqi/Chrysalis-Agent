@@ -8,11 +8,7 @@ from pathlib import Path
 from chrysalis.llm.types import Usage, _fmt_num
 
 DEFAULT_PRICING = {
-    "deepseek": {"input": 1.0, "output": 2.0, "cache_read": 0.1, "cache_write": 1.0},
-    "gpt-4.1-mini": {"input": 0.4, "output": 1.6, "cache_read": 0.1, "cache_write": 0.4},
-    "gpt-4.1": {"input": 2.0, "output": 8.0, "cache_read": 0.5, "cache_write": 2.0},
-    "claude-sonnet": {"input": 3.0, "output": 15.0, "cache_read": 0.3, "cache_write": 3.75},
-    "claude-haiku": {"input": 0.8, "output": 4.0, "cache_read": 0.08, "cache_write": 1.0},
+
 }
 
 

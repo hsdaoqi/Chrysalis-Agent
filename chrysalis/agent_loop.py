@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from chrysalis.context_engine import ContextEngine
 from chrysalis.llm import LLMClient
 from chrysalis.observation import compact_observation
 from utils.get_prompts import get_system_prompt
@@ -11,7 +12,6 @@ from utils.progress import ProgressCallback, summarize_action, summarize_observa
 from chrysalis.tools import TOOL_PROMPT, TOOLS_SCHEMA, dumps_observation, run_tool
 from chrysalis.working import WorkingMemory
 
-HISTORY_WINDOW = 30
 MAX_SUMMARY_LEN = 80
 
 
@@ -27,6 +27,7 @@ class AgentLoop:
             on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
             use_function_calling: bool = True,
             tools_schema: list[dict] | None = None,
+            context_engine: ContextEngine | None = None,
     ):
         self.llm = llm
         self.workspace = workspace
@@ -38,23 +39,30 @@ class AgentLoop:
         self.tools_schema = tools_schema
         self.working = WorkingMemory()
         self.history_info: list[str] = history if history is not None else []
+        self.context_engine = context_engine or ContextEngine()
 
     def run(self, task: str, session_context: str = "") -> dict:
         self.working.reset()
         self.history_info.append(f"[USER]: {_brief(task, 200)}")
 
-        session_block = ("\n\n" + session_context.strip()) if session_context.strip() else ""
-        system_prompt = get_system_prompt()
+        system_prompt = get_system_prompt(include_memory=False)
+        assembled = self.context_engine.assemble(
+            base_system=system_prompt,
+            task=task,
+            working=self.working,
+            history_lines=self.history_info,
+            session_context=session_context,
+            include_history_anchor=False,
+        )
 
         if self.use_function_calling:
-            return self._run_function_calling(task, system_prompt, session_block)
+            return self._run_function_calling(task, assembled.system)
         else:
-            return self._run_json_in_text(task, system_prompt, session_block)
+            return self._run_json_in_text(task, assembled.system)
 
     # ── Native Function Calling 模式 ──
 
-    def _run_function_calling(self, task: str, system_prompt: str, session_block: str) -> dict:
-        system = system_prompt + "\n\n## L1 记忆\n" + session_block
+    def _run_function_calling(self, task: str, system: str) -> dict:
         tools = self.tools_schema or TOOLS_SCHEMA
 
         # 设置 system prompt 和 tools
@@ -110,9 +118,10 @@ class AgentLoop:
                 images = []
                 if isinstance(observation, dict) and observation.get("_image"):
                     images.append(observation["_image"])
+                next_content = self._next_prompt_with_anchor(obs_text)
                 messages = [{
                     "role": "user",
-                    "content": obs_text,
+                    "content": next_content,
                     "images": images,
                     "tool_results": [{
                         "tool_use_id": tc.id,
@@ -135,10 +144,10 @@ class AgentLoop:
 
     # ── JSON-in-text 模式（fallback） ──
 
-    def _run_json_in_text(self, task: str, system_prompt: str, session_block: str) -> dict:
+    def _run_json_in_text(self, task: str, system_prompt: str) -> dict:
         tool_prompt = TOOL_PROMPT
         messages = [
-            {"role": "system", "content": system_prompt + "\n\n## L1 记忆\n" + session_block + "\n\n" + tool_prompt},
+            {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
             {"role": "user", "content": f"任务：\n{task}"},
         ]
 
@@ -199,14 +208,11 @@ class AgentLoop:
         self.history_info.append(f"[Agent] {summary}")
 
     def _get_anchor_prompt(self) -> str:
-        h = self.history_info
-        earlier = ""
-        if len(h) > HISTORY_WINDOW:
-            earlier = f"<earlier_context>\n{self._fold_earlier(h[:-HISTORY_WINDOW])}\n</earlier_context>\n"
-        h_str = "\n".join(h[-HISTORY_WINDOW:])
-        prompt = f"\n### [WORKING MEMORY]\n{earlier}<history>\n{h_str}\n</history>"
-        if self.working.key_info:
-            prompt += f"\n<key_info>{self.working.key_info}</key_info>"
+        prompt = "\n" + self.context_engine.session_anchor(
+            self.history_info,
+            self.working,
+            max_chars=3_000,
+        )
         if self.working.related_sop:
             prompt += f"\n有不清晰的地方请再次读取 {self.working.related_sop}"
         return prompt
@@ -238,10 +244,7 @@ class AgentLoop:
 
     def _next_prompt_with_anchor(self, prompt: str) -> str:
         anchor = self._get_anchor_prompt()
-        working_prompt = self.working.to_prompt()
         result = prompt + anchor
-        if working_prompt:
-            result += "\n\n" + working_prompt
         return result
 
     # ── Side effects ──

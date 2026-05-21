@@ -1,5 +1,8 @@
 """Chrysalis TUI — Claude Code 风格，带轮次折叠面板。"""
 
+import re
+
+from rich.text import Text
 from textual import work, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -17,6 +20,7 @@ from chrysalis.tui.events import (
     StreamDone,
     ToolCallCompleted,
     ToolCallStarted,
+    VoiceResult,
 )
 
 SLASH_COMMANDS = [
@@ -34,6 +38,7 @@ KEYBINDINGS_HELP = [
     ("Ctrl+C", "退出"),
     ("Ctrl+L", "清屏"),
     ("Ctrl+G", "跳转到历史问题"),
+    ("Ctrl+R", "语音输入（按一次录音，再按停止并转写）"),
     ("Tab", "补全 / 命令"),
     ("Esc", "关闭弹窗"),
 ]
@@ -169,10 +174,9 @@ class TurnPanel(Static):
     def _refresh_detail(self) -> None:
         detail = self.query_one(".turn-detail", Static)
         if self._lines:
-            from rich.markup import escape
-            detail.update(escape("\n".join(self._lines)))
+            detail.update(Text("\n".join(_plain_turn_lines(self._lines)), style="#585b70"))
         else:
-            detail.update("[#585b70](empty)[/]")
+            detail.update(Text("(empty)", style="#585b70"))
 
 
 class ChrysalisApp(App):
@@ -253,6 +257,7 @@ class ChrysalisApp(App):
         Binding("ctrl+c", "quit", show=False),
         Binding("ctrl+l", "clear_screen", show=False),
         Binding("ctrl+g", "jump_to_message", show=False),
+        Binding("ctrl+r", "toggle_recording", show=False),
     ]
 
     def __init__(self) -> None:
@@ -266,6 +271,7 @@ class ChrysalisApp(App):
         self._has_final = False
         self._user_messages: list[tuple[str, Static]] = []
         self._autocomplete_widget: Static | None = None
+        self._voice_recorder = None
 
     def compose(self) -> ComposeResult:
         yield ScrollableContainer(id="scroll")
@@ -505,6 +511,43 @@ class ChrysalisApp(App):
             self._autocomplete_widget.remove()
             self._autocomplete_widget = None
 
+    # ── Voice input ──
+
+    def _get_voice_recorder(self):
+        if self._voice_recorder is None:
+            try:
+                from chrysalis.voice import VoiceRecorder
+                self._voice_recorder = VoiceRecorder()
+            except ImportError:
+                return None
+        return self._voice_recorder
+
+    def action_toggle_recording(self) -> None:
+        recorder = self._get_voice_recorder()
+        if recorder is None:
+            self._out("[#f38ba8]语音功能未安装，请运行: pip install -e \".[voice]\"[/]")
+            return
+
+        if not recorder.is_recording:
+            recorder.start_recording()
+            self._update_status("recording")
+        else:
+            self._update_status("transcribing")
+            recorder.stop_and_transcribe(on_done=self._on_voice_done)
+
+    def _on_voice_done(self, text: str) -> None:
+        self.call_from_thread(self.post_message, VoiceResult(text))
+
+    def on_voice_result(self, event: VoiceResult) -> None:
+        self._update_status("ready")
+        if event.text:
+            inp = self.query_one("#input", Input)
+            inp.value = event.text
+            inp.cursor_position = len(event.text)
+            inp.focus()
+        else:
+            self._out("[#585b70]未识别到语音内容[/]")
+
     # ── Session command ──
 
     def _handle_session_command(self, raw: str) -> None:
@@ -533,7 +576,9 @@ class ChrysalisApp(App):
                 return
             s = sessions[idx]
             kernel.load_session(s["id"])
+            self._replay_history(kernel.llm.history)
             self._out(f"[#a6e3a1]已加载会话：{s['title']} ({s['turns']} turns)[/]")
+            self._out("")
             return
 
         if sub == "delete":
@@ -567,6 +612,67 @@ class ChrysalisApp(App):
 
     # ── Helpers ──
 
+    def _replay_history(self, history: list[dict]) -> None:
+        """将已加载的会话历史以简洁模式渲染到 scroll 区域。"""
+        scroll = self.query_one("#scroll")
+        # 清空当前显示
+        for child in list(scroll.children):
+            child.remove()
+        self._user_messages = []
+
+        self._out("[#585b70]── 会话历史 ──[/]")
+        self._out("")
+
+        for msg in history:
+            role = msg.get("role", "")
+            blocks = msg.get("blocks", [])
+
+            if role == "user":
+                text = self._extract_user_text(blocks)
+                if text:
+                    widget = Static(f"[bold #cdd6f4]> {text}[/]", markup=True)
+                    scroll.mount(widget)
+                    self._user_messages.append((text, widget))
+                    self._out("")
+
+            elif role == "assistant":
+                text = self._extract_assistant_text(blocks)
+                tool_names = [
+                    b.get("name", "")
+                    for b in blocks
+                    if b.get("type") == "tool_use" and b.get("name")
+                ]
+                if tool_names:
+                    tools_str = ", ".join(tool_names)
+                    self._out(f"  [#585b70]⟳ {tools_str}[/]")
+                if text:
+                    md_widget = Markdown(text, classes="final-md")
+                    scroll.mount(md_widget)
+                    self._out("")
+
+        self._out("[#585b70]── 历史结束 ──[/]")
+        self._out("")
+        self._scroll()
+
+    def _extract_user_text(self, blocks: list[dict]) -> str:
+        """从 user message blocks 中提取纯文本（跳过 tool_result）。"""
+        parts = []
+        for b in blocks:
+            if b.get("type") == "text":
+                parts.append(b.get("text", ""))
+        text = "".join(parts).strip()
+        if len(text) > 200:
+            text = text[:200] + "..."
+        return text
+
+    def _extract_assistant_text(self, blocks: list[dict]) -> str:
+        """从 assistant message blocks 中提取最终回答文本。"""
+        parts = []
+        for b in blocks:
+            if b.get("type") == "text":
+                parts.append(b.get("text", ""))
+        return "".join(parts).strip()
+
     def _out(self, text: str) -> None:
         self.query_one("#scroll").mount(Static(text, markup=True))
 
@@ -588,6 +694,10 @@ class ChrysalisApp(App):
         elif status == "executing":
             tool = f" · {detail}" if detail else ""
             s = f"[#89b4fa]⟳[/] [#585b70]{model}{tool}[/]"
+        elif status == "recording":
+            s = f"[#f38ba8]●[/] [#585b70]recording... (Ctrl+R to stop)[/]"
+        elif status == "transcribing":
+            s = f"[#a6e3a1]⟳[/] [#585b70]transcribing...[/]"
         else:
             s = f"[#585b70]{model} · {status}[/]"
         if self._turn:
@@ -674,3 +784,12 @@ def _common_prefix(strings: list[str]) -> str:
             if not prefix:
                 return ""
     return prefix
+
+
+_RICH_TAG_RE = re.compile(r"\[/?(?:#[0-9a-fA-F]{3,8}|[a-zA-Z][a-zA-Z0-9_ -]*(?: [^\]]*)?)\]")
+
+
+def _plain_turn_lines(lines: list[str]) -> list[str]:
+    """Turn details contain arbitrary model/tool text, so render them as plain text."""
+
+    return [_RICH_TAG_RE.sub("", line) for line in lines]

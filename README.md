@@ -71,13 +71,13 @@ L3  SOPs            memory/*.md — 操作规范（git、web、plan、verify…�
 L4  Session Archive data/l4_session/ — 压缩后的历史会话
 ```
 
-原则：**No Execution, No Memory** — 只有工具验证过的事实才能写入。
+Context Engine 每轮按预算组装 `system prompt > L1 insight > working memory > 相关 L2/L3 > session anchor > recent turns`，避免把长期记忆整包塞进上下文。原则：**No Execution, No Memory** — 只有工具验证过的事实才能写入。
 
 ## LLM 模块
 
 - 支持 OpenAI 和 Anthropic 协议，自动适配
 - Native function calling（不再用 JSON-in-text）
-- 流式输出 + 上下文自动裁剪
+- 流式输出 + Claude Code 风格 runtime compact（microcompact / full compact / hard trim）
 - 多模型 failover + 指数退避重试
 - 原始 prompt/response 日志记录
 
@@ -87,6 +87,7 @@ L4  Session Archive data/l4_session/ — 压缩后的历史会话
 chrysalis/
   kernel.py          CLI 入口 + Kernel 装配
   agent_loop.py      观察-行动循环（function calling / JSON-in-text 双模式）
+  context_engine.py  OpenClaw 风格 Context Engine（长期记忆动态组装）
   session.py         跨 session 持久化上下文
   working.py         任务内短期工作记忆
   observation.py     工具观察结果压缩
@@ -94,7 +95,7 @@ chrysalis/
   browser.py         CDP 浏览器控制
   task_queue.py      任务队列
   compress_session.py  L4 会话压缩归档
-  llm/               LLM 模块（streaming、failover、context trim）
+  llm/               LLM 模块（streaming、failover、runtime compact）
   tools/             原子工具注册表
   tui/               终端 UI（Textual）
 

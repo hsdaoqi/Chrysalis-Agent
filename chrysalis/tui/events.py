@@ -64,3 +64,11 @@ class StatusChange(Message):
         super().__init__()
         self.status = status
         self.detail = detail
+
+
+class VoiceResult(Message):
+    """语音转写完成，携带识别文本。"""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.text = text

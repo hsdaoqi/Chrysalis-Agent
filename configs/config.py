@@ -173,6 +173,7 @@ class AgentConfig:
                 temperature=float(entry.get("temperature", 0.2)),
                 max_tokens=int(entry.get("max_tokens", 4096)) if entry.get("max_tokens") else None,
                 max_retries=int(entry.get("max_retries", 4)),
+                connect_timeout=int(entry.get("connect_timeout", 5)),
                 read_timeout=int(entry.get("timeout", 60)),
                 proxy=entry.get("proxy") or None,
                 thinking=entry.get("thinking", "disabled"),
