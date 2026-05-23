@@ -41,14 +41,14 @@ class Kernel:
             llm: LLMClient | None = None,
             progress: ProgressCallback | None = None,
     ):
-        self.config = config or AgentConfig()
-        self.progress = progress
-        self.session_store = SessionStore(self.config.data_dir / "sessions")
-        self.tracker = UsageTracker(
+        self.config = config or AgentConfig()  # 全局配置，路径、模型、turn 数等
+        self.progress = progress  # 进度回调，CLI/TUI 用来显示状态
+        self.session_store = SessionStore(self.config.data_dir / "sessions")  # 持久化 canonical history
+        self.tracker = UsageTracker(  # token/费用/turn 统计
             persist_path=self.config.data_dir / "usage_history.jsonl",
             pricing=self.config.llm.pricing_dict(),
         )
-        self.llm = llm or create_client(
+        self.llm = llm or create_client(  # LLMClient，AgentLoop 只通过它和模型说话
             self.config.load_session_configs(),
             tracker=self.tracker,
             on_history_changed=self.session_store.save,
@@ -56,9 +56,9 @@ class Kernel:
         if llm and not llm._on_history_changed:
             llm._on_history_changed = self.session_store.save
         self.session_store.new_session(model=self.active_model_name)
-        self.pending_user_action: dict | None = None
-        self.history: list[str] = []
-        self.loop = AgentLoop(
+        self.pending_user_action: dict | None = None  # 记录 ask_user 等待用户操作后的续跑状态
+        self.history: list[str] = []  # 轻量 session anchor 文本历史
+        self.loop = AgentLoop(  # 真正执行观察-行动循环的 AgentLoop
             self.llm,
             self.config.workspace_dir,
             self.config.max_turns,
@@ -271,7 +271,7 @@ def _show_queue(queue: TaskQueue, output_func) -> None:
     for i, t in enumerate(tasks):
         status = t.get("status", "?")
         marker = {"pending": "[ ]", "running": "[>]", "done": "[x]", "failed": "[!]"}.get(status, "[?]")
-        line = f"  {marker} {i+1}. {t.get('task', '')}"
+        line = f"  {marker} {i + 1}. {t.get('task', '')}"
         if status in ("done", "failed") and t.get("result"):
             line += f"  -> {t['result'][:60]}"
         output_func(line)

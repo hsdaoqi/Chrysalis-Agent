@@ -67,18 +67,20 @@
 ]
 
 // ============================================================================
-//  provider 可选值：
-//    "deepseek" / "ds"     → OpenAI 协议，默认地址 https://api.deepseek.com
-//    "openai"              → OpenAI 协议，默认地址 https://api.openai.com/v1
-//    "anthropic" / "claude"→ Anthropic 协议，默认地址 https://api.anthropic.com
-//    其他任意值            → 当作 OpenAI 协议，必须手动填 base_url
-//
-//  thinking 选项（仅 Anthropic 协议有效）：
-//    "disabled"  → 不使用扩展思考（默认）
-//    "adaptive"  → 模型自行决定是否思考
-//    "enabled"   → 强制思考，此时必须填 thinking_budget
+//  可选选项
+//  context_window=28000,
+//  temperature=0.2,
+//  max_tokens=4096,
+//  max_retries=4,
+//  connect_timeout=5,
+//  read_timeout=60,
+//  proxy=XXX or None,
+//  thinking=disabled,
+//  thinking_budget=None,
 //
 //  环境变量引用：
 //    字符串中的 ${VAR_NAME} 会被替换为 .env 或系统环境变量的值
 //    例如 "api_key": "${MY_KEY}" → 读取环境变量 MY_KEY
+
+
 // ============================================================================

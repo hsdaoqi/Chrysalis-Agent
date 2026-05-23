@@ -28,9 +28,9 @@ class BaseSession:
 
     def __init__(self, config: SessionConfig):
         self.config = config
-        self.history: list[dict] = []
-        self.system: str = ""
-        self.tools: list[dict] | None = None
+        self.history: list[dict] = []  # 发给LLM的历史内容
+        self.system: str = ""  # 系统提示词
+        self.tools: list[dict] | None = None  # 工具提示词
         self._lock = threading.Lock()
 
     def ask(self, message: dict) -> Generator[str, None, Response]:

@@ -20,10 +20,10 @@ class LLMClient:
     """agent_loop 的唯一 LLM 接口。"""
 
     def __init__(
-        self,
-        session: BaseSession,
-        tracker: UsageTracker | None = None,
-        on_history_changed: Callable[[list[dict]], None] | None = None,
+            self,
+            session: BaseSession,
+            tracker: UsageTracker | None = None,
+            on_history_changed: Callable[[list[dict]], None] | None = None,
     ):
         self.session = session
         self._pending_tool_ids: list[str] = []
@@ -59,7 +59,7 @@ class LLMClient:
                 self.session.system = msg["content"]
 
         canonical_message = self._merge_user_message(messages)
-        write_llm_log("Prompt", json.dumps(canonical_message, ensure_ascii=False, default=str))
+        write_llm_log("Prompt", json.dumps(canonical_message, ensure_ascii=False, indent=2, default=str))
 
         gen = self.session.ask(canonical_message)
         response: Response | None = None

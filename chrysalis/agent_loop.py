@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from typing import Callable
-
+from utils.text import brief_text
 from chrysalis.context_engine import ContextEngine
 from chrysalis.llm import LLMClient
 from chrysalis.observation import compact_observation
@@ -23,8 +23,10 @@ class AgentLoop:
             max_turns: int = 12,
             progress: ProgressCallback | None = None,
             history: list[str] | None = None,
+            # 给TUI 流式输出用的
             on_stream_chunk: "Callable[[str], None] | None" = None,
             on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
+
             use_function_calling: bool = True,
             tools_schema: list[dict] | None = None,
             context_engine: ContextEngine | None = None,
@@ -37,13 +39,13 @@ class AgentLoop:
         self.on_tool_call = on_tool_call
         self.use_function_calling = use_function_calling
         self.tools_schema = tools_schema
-        self.working = WorkingMemory()
-        self.history_info: list[str] = history if history is not None else []
+        self.working = WorkingMemory()  # 当前任务内短期工作记忆
+        self.history_info: list[str] = history if history is not None else []  # 轻量会话摘要，用于 session anchor
         self.context_engine = context_engine or ContextEngine()
 
     def run(self, task: str, session_context: str = "") -> dict:
         self.working.reset()
-        self.history_info.append(f"[USER]: {_brief(task, 200)}")
+        self.history_info.append(f"[USER]: {brief_text(task, 400)}")
 
         system_prompt = get_system_prompt(include_memory=False)
         assembled = self.context_engine.assemble(
@@ -71,7 +73,6 @@ class AgentLoop:
 
         # 首条 user message
         messages = [
-            {"role": "system", "content": system},
             {"role": "user", "content": task},
         ]
 
@@ -134,7 +135,7 @@ class AgentLoop:
             content = response.content.strip()
             if content:
                 self._progress(summarize_action(turn, {"final": content}))
-                self.history_info.append(f"[Agent] {_brief(content, MAX_SUMMARY_LEN)}")
+                self.history_info.append(f"[Agent] {brief_text(content, MAX_SUMMARY_LEN)}")
                 return {"ok": True, "final": content}
 
             # 空响应
@@ -197,11 +198,11 @@ class AgentLoop:
         if not action:
             summary = "JSON解析失败"
         elif "final" in action:
-            summary = _brief(str(action["final"]), MAX_SUMMARY_LEN)
+            summary = brief_text(str(action["final"]), MAX_SUMMARY_LEN)
         elif "tool" in action:
             tool = action.get("tool", "")
             args = {k: v for k, v in (action.get("args") or {}).items() if not str(k).startswith("_")}
-            args_str = _brief(json.dumps(args, ensure_ascii=False), 50)
+            args_str = brief_text(json.dumps(args, ensure_ascii=False), 50)
             summary = f"调用工具 {tool}, args: {args_str}"
         else:
             summary = "直接回答"
@@ -279,11 +280,6 @@ def _parse_json(text: str) -> dict | None:
             except json.JSONDecodeError:
                 return None
     return None
-
-
-def _brief(text: str, max_len: int = 80) -> str:
-    text = text.replace("\n", " ").strip()
-    return text[:max_len] + "..." if len(text) > max_len else text
 
 
 def _exhaust_generator(gen, on_chunk=None):

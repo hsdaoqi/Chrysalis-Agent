@@ -2,6 +2,7 @@
 
 import ast
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -37,9 +38,21 @@ def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None
 
     base = safe_path(cwd, workspace) if cwd else (workspace or project_path("workspace"))
     base.mkdir(parents=True, exist_ok=True)
+
+    header_path = PROJECT_ROOT / "assets" / "code_run_header.py"
+    if header_path.exists():
+        header = header_path.read_text(encoding="utf-8") + "\n"
+    else:
+        header = (
+            "import sys\nimport json\nfrom pathlib import Path\n"
+            f"sys.path.insert(0, {str(PROJECT_ROOT)!r})\n"
+            f"sys.path.insert(0, {str(PROJECT_ROOT / 'memory')!r})\n"
+        )
+
     prelude = (
-        "import sys\nimport json\nfrom pathlib import Path\n"
-        f"sys.path.insert(0, {str(PROJECT_ROOT)!r})\n"
+        header
+        + f"sys.path.insert(0, {str(PROJECT_ROOT)!r})\n"
+        f"sys.path.insert(0, {str(PROJECT_ROOT / 'memory')!r})\n"
         f"PROJECT_ROOT = Path({str(PROJECT_ROOT)!r})\n"
         f"WORKSPACE = Path({str(base)!r})\n"
     )
@@ -48,9 +61,12 @@ def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None
         f.write(prelude + "\n" + code)
 
     try:
+        env = os.environ.copy()
+        env["PYTHONIOENCODING"] = "utf-8"
         proc = subprocess.run(
-            [sys.executable, str(script)],
+            [sys.executable, "-X", "utf8", str(script)],
             cwd=str(base), capture_output=True, text=True, timeout=timeout,
+            encoding="utf-8", errors="replace", env=env,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"代码执行超时: {timeout} 秒"}

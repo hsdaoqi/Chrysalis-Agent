@@ -1,10 +1,8 @@
-"""Context Engine for assembling Chrysalis runtime context.
+"""用于组装 Chrysalis 运行时上下文的上下文引擎。
 
-The LLM layer still owns runtime compaction of canonical message history.  This
-module owns the higher-level memory assembly step: choose what long-term,
-working, and session context to inject before a model call.
+LLM 层仍然负责规范消息历史的运行时压缩（compaction）。
+本模块负责更高级别的记忆组装步骤：选择在模型调用前要注入哪些长期（long-term）、工作（working）和会话（session）上下文。
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -16,10 +14,10 @@ from chrysalis.working import WorkingMemory
 
 @dataclass(frozen=True)
 class ContextBudget:
-    """Character budgets for the memory bundle.
+    """记忆包（memory bundle）的字符数预算。
 
-    Budgets are intentionally char-based to keep the engine dependency-free.
-    Runtime token/window trimming remains in chrysalis.llm.context.
+    预算有意设计为基于字符进行计算，以保持引擎的无依赖性。
+    运行时的 token/窗口裁剪（trimming）逻辑仍保留在 chrysalis.llm.context 中。
     """
 
     total_chars: int = 12_000
@@ -37,33 +35,32 @@ class AssembledContext:
 
 
 class ContextEngine:
-    """Budgeted assembler for OpenClaw-style layered memory."""
+    """用于 OpenClaw 风格分层记忆的带预算限制的组装器（assembler）。"""
 
     def __init__(
-        self,
-        project_root: Path | None = None,
-        memory_dir: Path | None = None,
-        budget: ContextBudget | None = None,
+            self,
+            project_root: Path | None = None,
+            memory_dir: Path | None = None,
+            budget: ContextBudget | None = None,
     ) -> None:
         self.project_root = project_root or PROJECT_ROOT
         self.memory_dir = memory_dir or self.project_root / "memory"
         self.budget = budget or ContextBudget()
 
     def assemble(
-        self,
-        *,
-        base_system: str,
-        task: str = "",
-        working: WorkingMemory | None = None,
-        history_lines: list[str] | None = None,
-        session_context: str = "",
-        include_history_anchor: bool = True,
+            self,
+            *,
+            base_system: str,
+            task: str = "",
+            working: WorkingMemory | None = None,
+            history_lines: list[str] | None = None,
+            session_context: str = "",
+            include_history_anchor: bool = True,
     ) -> AssembledContext:
-        """Return a system prompt plus optional per-turn anchor.
+        """返回系统提示词（system prompt）以及可选的每轮对话锚点（per-turn anchor）。
 
-        Priority order:
-        system prompt > L1 insight > working memory > relevant L2/L3 >
-        earlier summary > recent turns.
+        优先级顺序：
+        系统提示词 > L1 洞察（insight） > 工作记忆 > 相关的 L2/L3（记忆） > 早期总结 > 近期对话轮次。
         """
 
         remaining = self.budget.total_chars
@@ -93,10 +90,10 @@ class ContextEngine:
         return AssembledContext(system="\n".join(system_parts), anchor=anchor, included=included)
 
     def session_anchor(
-        self,
-        history_lines: list[str],
-        working: WorkingMemory | None = None,
-        max_chars: int | None = None,
+            self,
+            history_lines: list[str],
+            working: WorkingMemory | None = None,
+            max_chars: int | None = None,
     ) -> str:
         """Build a compact in-session continuity anchor."""
 
@@ -121,10 +118,10 @@ class ContextEngine:
         return _clip("\n".join(lines), max_chars)
 
     def _memory_sections(
-        self,
-        task: str,
-        working: WorkingMemory | None,
-        session_context: str,
+            self,
+            task: str,
+            working: WorkingMemory | None,
+            session_context: str,
     ) -> list[tuple[str, str, int]]:
         sections: list[tuple[str, str, int]] = []
 
@@ -167,9 +164,9 @@ class ContextEngine:
         return "[Relevant L2/L3]\n" + "\n\n".join(parts)
 
     def _select_related_files(
-        self,
-        task: str,
-        working: WorkingMemory | None,
+            self,
+            task: str,
+            working: WorkingMemory | None,
     ) -> list[Path]:
         query = " ".join([
             task.lower(),

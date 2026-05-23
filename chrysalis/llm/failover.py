@@ -18,13 +18,13 @@ class FailoverSession(BaseSession):
         if not sessions:
             raise ValueError("至少需要一个 session")
         self.sessions = sessions
-        self._spring_back = spring_back
+        self._spring_back = spring_back  # 切换模型的秒
         self._current_idx = 0
         self._switched_at = 0.0
         self.config = sessions[0].config
         self._lock = __import__("threading").Lock()
         for s in self.sessions:
-            s.config.max_retries = 0
+            s.config.max_retries = 3
 
     @property
     def system(self) -> str:
@@ -102,6 +102,14 @@ class FailoverSession(BaseSession):
         return Response(content=error_text, raw=error_text)
 
     def _pick_start(self) -> int:
+        """
+        如果当前已经是主模型 index 0：继续从主模型开始
+
+        如果当前是备用模型：
+            看距离切换时间是否超过 300 秒
+            超过了，就回到主模型
+            没超过，就继续用当前备用模型
+        """
         if self._current_idx == 0:
             return 0
         if time.time() - self._switched_at > self._spring_back:

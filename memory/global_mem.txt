@@ -2,7 +2,7 @@
 
 # 已验证环境事实
 - code_run 执行 Python 时 cwd = D:\Project\Chrysalis（项目根），不是 workspace/。写入文件直接使用相对路径（如 `titles.txt`），不要加 `workspace/` 前缀（已验证：加前缀导致 FileNotFoundError）。
-
+- 你要读各种sop文件都是以.md结尾的文件
 
 # LLM 配置
 - 多模型配置文件: configs/llm_models.json（JSON数组，按顺序加载）

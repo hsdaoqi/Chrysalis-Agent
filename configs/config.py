@@ -38,14 +38,6 @@ class LLMConfig:
     cache_read_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_READ_PRICE", "0")))
     cache_write_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_WRITE_PRICE", "0")))
 
-    def __post_init__(self) -> None:
-        self.provider = (self.provider or "deepseek").strip().lower()
-        if not self.base_url:
-            self.base_url = _default_llm_base_url(self.provider)
-        self.base_url = _normalize_llm_base_url(self.provider, self.base_url)
-        if not self.model:
-            self.model = _default_llm_model(self.provider)
-
     def to_session_config(self):
         """转换为新 LLM 模块的 SessionConfig。"""
         from chrysalis.llm.types import SessionConfig
@@ -74,36 +66,6 @@ class LLMConfig:
             "cache_read": self.cache_read_price,
             "cache_write": self.cache_write_price,
         }
-
-
-def _default_llm_provider() -> str:
-    return os.getenv("CHRYSALIS_LLM_PROVIDER", "deepseek").strip().lower()
-
-
-def _default_llm_base_url(provider: str | None = None) -> str:
-    provider = (provider or _default_llm_provider()).strip().lower()
-    if provider == "openai":
-        return "https://api.openai.com/v1"
-    if provider in {"deepseek", "ds"}:
-        return "https://api.deepseek.com"
-    return ""
-
-
-def _default_llm_model(provider: str | None = None) -> str:
-    provider = (provider or _default_llm_provider()).strip().lower()
-    if provider == "openai":
-        return "gpt-4.1-mini"
-    return "deepseek-v4-pro"
-
-
-def _normalize_llm_base_url(provider: str, base_url: str) -> str:
-    value = (base_url or "").strip().rstrip("/")
-    if provider in {"deepseek", "ds"} and value == "https://api.deepseek.com":
-        return value
-    if provider == "openai" and value == "https://api.openai.com":
-        return value + "/v1"
-    return value
-
 
 @dataclass
 class AgentConfig:
@@ -160,9 +122,8 @@ class AgentConfig:
             entry = _expand_env_vars(entry)
             provider = (entry.get("provider") or "openai").strip().lower()
             protocol = "anthropic" if provider in {"anthropic", "claude"} else "openai"
-            base_url = entry.get("base_url") or _default_llm_base_url(provider)
-            base_url = _normalize_llm_base_url(provider, base_url)
-            model = entry.get("model") or _default_llm_model(provider)
+            base_url = entry.get("base_url")
+            model = entry.get("model")
 
             configs.append(SessionConfig(
                 api_key=entry.get("api_key", ""),

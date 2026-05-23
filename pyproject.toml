@@ -4,7 +4,6 @@ version = "0.1.0"
 description = "一个从 GenericAgent 风格种子重建的极简自进化 agent。"
 requires-python = ">=3.11"
 dependencies = [
-    "openai>=1.0.0",
     "python-dotenv>=1.0.0",
     "websocket-client>=1.8.0",
 ]
@@ -18,6 +17,16 @@ tui = [
 ]
 vision = [
     "mss>=9.0.0",
+    "Pillow>=10.0.0",
+]
+desktop = [
+    "pywin32>=306",
+    "pygetwindow>=0.0.9",
+    "pyperclip>=1.8.0",
+    "Pillow>=10.0.0",
+]
+ocr = [
+    "rapidocr-onnxruntime>=1.3.0",
     "Pillow>=10.0.0",
 ]
 voice = [

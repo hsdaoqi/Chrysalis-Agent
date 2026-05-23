@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>Chrysalis 架构流程图</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', sans-serif;
+            background: #0d1117;
+            color: #c9d1d9;
+            padding: 40px;
+            min-height: 100vh;
+        }
+        h1 {
+            text-align: center;
+            color: #58a6ff;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            text-align: center;
+            color: #8b949e;
+            margin-bottom: 40px;
+            font-size: 14px;
+        }
+        .diagram-container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Section styles */
+        .section {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 24px;
+            position: relative;
+        }
+        .section-title {
+            color: #58a6ff;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #21262d;
+        }
+
+        /* Flow nodes */
+        .flow-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: 12px 0;
+            flex-wrap: wrap;
+        }
+        .node {
+            padding: 10px 18px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            text-align: center;
+            min-width: 140px;
+            position: relative;
+        }
+        .node-entry {
+            background: #1f6feb;
+            color: #fff;
+            border: 2px solid #388bfd;
+        }
+        .node-class {
+            background: #21262d;
+            border: 2px solid #f78166;
+            color: #f78166;
+        }
+        .node-method {
+            background: #21262d;
+            border: 1px solid #3fb950;
+            color: #3fb950;
+            font-family: 'Consolas', monospace;
+            font-size: 12px;
+        }
+        .node-tool {
+            background: #21262d;
+            border: 1px solid #d2a8ff;
+            color: #d2a8ff;
+        }
+        .node-data {
+            background: #21262d;
+            border: 1px solid #79c0ff;
+            color: #79c0ff;
+            border-radius: 20px;
+        }
+        .node-decision {
+            background: #21262d;
+            border: 2px solid #d29922;
+            color: #d29922;
+            transform: rotate(0deg);
+            clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+            padding: 20px 30px;
+            min-width: 160px;
+        }
+        .node-result {
+            background: #238636;
+            color: #fff;
+            border: 2px solid #3fb950;
+        }
+
+        /* Arrows */
+        .arrow {
+            color: #484f58;
+            font-size: 20px;
+            font-weight: bold;
+        }
+        .arrow-down {
+            text-align: center;
+            color: #484f58;
+            font-size: 24px;
+            margin: 8px 0;
+        }
+        .arrow-label {
+            font-size: 11px;
+            color: #8b949e;
+            text-align: center;
+            margin-top: -4px;
+        }
+
+        /* Grid layout for parallel components */
+        .grid-3 {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 16px;
+            margin: 16px 0;
+        }
+        .grid-2 {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin: 16px 0;
+        }
+        .grid-4 {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin: 16px 0;
+        }
+
+        .sub-box {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .sub-box h4 {
+            color: #f78166;
+            font-size: 13px;
+            margin-bottom: 8px;
+        }
+        .sub-box ul {
+            list-style: none;
+            padding: 0;
+        }
+        .sub-box li {
+            font-size: 12px;
+            color: #8b949e;
+            padding: 3px 0;
+            font-family: 'Consolas', monospace;
+        }
+        .sub-box li::before {
+            content: "→ ";
+            color: #3fb950;
+        }
+
+        /* Loop indicator */
+        .loop-indicator {
+            position: absolute;
+            right: 20px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 2px dashed #d29922;
+            border-radius: 8px;
+            padding: 6px 12px;
+            font-size: 11px;
+            color: #d29922;
+        }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-bottom: 30px;
+            padding: 16px;
+            background: #161b22;
+            border-radius: 8px;
+            border: 1px solid #30363d;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        .legend-dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        /* Main flow connector */
+        .main-flow {
+            border-left: 3px solid #1f6feb;
+            margin-left: 40px;
+            padding-left: 20px;
+        }
+        .flow-step {
+            position: relative;
+            margin-bottom: 20px;
+        }
+        .flow-step::before {
+            content: "";
+            position: absolute;
+            left: -26px;
+            top: 14px;
+            width: 12px;
+            height: 12px;
+            background: #1f6feb;
+            border-radius: 50%;
+        }
+        .flow-step-title {
+            color: #58a6ff;
+            font-size: 14px;
+            font-weight: 600;
+            margin-bottom: 6px;
+        }
+        .flow-step-detail {
+            color: #8b949e;
+            font-size: 12px;
+            font-family: 'Consolas', monospace;
+        }
+        .flow-step-file {
+            color: #484f58;
+            font-size: 11px;
+        }
+
+        .highlight {
+            color: #ffa657;
+        }
+        .comment {
+            color: #484f58;
+            font-style: italic;
+            font-size: 11px;
+        }
+
+        /* Responsive */
+        @media (max-width: 800px) {
+            .grid-3, .grid-4 { grid-template-columns: 1fr; }
+            .grid-2 { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <h1>Chrysalis 架构流程图</h1>
+    <p class="subtitle">极简自进化 Agent — 从任务输入到执行完成的完整调用链</p>
+
+    <div class="diagram-container">
+
+        <!-- Legend -->
+        <div class="legend">
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#1f6feb;"></div>
+                <span>入口/流程节点</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#f78166;"></div>
+                <span>核心类</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#3fb950;"></div>
+                <span>关键方法</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#d2a8ff;"></div>
+                <span>工具</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#79c0ff;"></div>
+                <span>数据/配置</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#d29922;"></div>
+                <span>决策/循环</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-dot" style="background:#238636;"></div>
+                <span>结果输出</span>
+            </div>
+        </div>
+
+        <!-- 1. Entry Point -->
+        <div class="section">
+            <div class="section-title">1. 启动入口 — kernel.py:main()</div>
+            <div class="flow-row">
+                <div class="node node-entry">CLI 命令<br><small>chrysalis &lt;task&gt;</small></div>
+                <span class="arrow">→</span>
+                <div class="node node-method">main()</div>
+                <span class="arrow">→</span>
+                <div class="node node-class">argparse 解析</div>
+            </div>
+            <div class="arrow-down">↓</div>
+            <div class="flow-row">
+                <div class="node node-entry" style="min-width:180px;">单次模式<br><small>chrysalis "任务"</small></div>
+                <div class="node node-entry" style="min-width:180px;">交互模式<br><small>--interactive</small></div>
+                <div class="node node-entry" style="min-width:180px;">TUI 模式<br><small>--tui</small></div>
+            </div>
+        </div>
+
+        <!-- 2. Kernel Initialization -->
+        <div class="section">
+            <div class="section-title">2. Kernel 初始化 — 组装所有组件</div>
+            <div class="flow-row">
+                <div class="node node-class">Kernel.__init__()</div>
+            </div>
+            <div class="arrow-down">↓ 创建以下组件</div>
+            <div class="grid-4">
+                <div class="sub-box">
+                    <h4>AgentConfig</h4>
+                    <ul>
+                        <li>configs/config.py</li>
+                        <li>读取 .env 环境变量</li>
+                        <li>加载 llm_models.json</li>
+                        <li>max_turns=40</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>LLMClient</h4>
+                    <ul>
+                        <li>llm/client.py</li>
+                        <li>BaseSession 或</li>
+                        <li>FailoverSession</li>
+                        <li>消息合并/流式输出</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>AgentLoop</h4>
+                    <ul>
+                        <li>agent_loop.py</li>
+                        <li>观察-行动循环</li>
+                        <li>工具调用分发</li>
+                        <li>多轮对话驱动</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>辅助组件</h4>
+                    <ul>
+                        <li>UsageTracker 用量</li>
+                        <li>SessionStore 持久化</li>
+                        <li>TaskQueue 任务队列</li>
+                        <li>Subagent 子代理</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Task Execution -->
+        <div class="section">
+            <div class="section-title">3. 任务执行 — Kernel.run(task)</div>
+            <div class="main-flow">
+                <div class="flow-step">
+                    <div class="flow-step-title">重置用量追踪</div>
+                    <div class="flow-step-detail">llm.reset_task_usage()</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">解决待处理的用户操作</div>
+                    <div class="flow-step-detail">_resolve_pending_user_action(task)</div>
+                    <div class="flow-step-file">处理登录/验证码等需要人工介入的场景</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">调用 AgentLoop</div>
+                    <div class="flow-step-detail">AgentLoop.run(task, session_context)</div>
+                </div>
+                <div class="flow-step">
+                    <div class="flow-step-title">记录用量和耗时</div>
+                    <div class="flow-step-detail">tracker.end_task(task, elapsed, model)</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 4. AgentLoop Core -->
+        <div class="section">
+            <div class="section-title">4. AgentLoop 核心循环 — agent_loop.py</div>
+
+            <div class="flow-row">
+                <div class="node node-method">working.reset()</div>
+                <span class="arrow">→</span>
+                <div class="node node-class">ContextEngine.assemble()</div>
+            </div>
+            <div class="arrow-down">↓ 组装系统提示词</div>
+
+            <!-- Context Assembly Detail -->
+            <div class="grid-3">
+                <div class="sub-box">
+                    <h4>系统提示词组装</h4>
+                    <ul>
+                        <li>system_prompt.txt 基础</li>
+                        <li>当前日期注入</li>
+                        <li>L1 记忆洞察</li>
+                        <li>工作记忆 (key_info)</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>记忆选择</h4>
+                    <ul>
+                        <li>global_mem_insight.txt</li>
+                        <li>关键词匹配 SOP</li>
+                        <li>会话上下文</li>
+                        <li>总预算 12k 字符</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>模式选择</h4>
+                    <ul>
+                        <li>Function Calling 模式</li>
+                        <li>JSON-in-Text 回退</li>
+                        <li>取决于模型能力</li>
+                        <li>优先 FC 模式</li>
+                    </ul>
+                </div>
+            </div>
+
+            <div class="arrow-down">↓ 进入主循环 (最多 max_turns=40 轮)</div>
+
+            <!-- Main Loop -->
+            <div style="border: 2px dashed #d29922; border-radius: 12px; padding: 20px; position: relative;">
+                <div style="position:absolute; top:-12px; left:20px; background:#0d1117; padding:0 8px; color:#d29922; font-size:12px; font-weight:600;">
+                    LOOP: _run_function_calling()
+                </div>
+
+                <div class="flow-row">
+                    <div class="node node-method">LLMClient.chat(messages, tools)</div>
+                </div>
+                <div class="arrow-down">↓</div>
+
+                <div class="grid-2">
+                    <div class="sub-box">
+                        <h4>消息处理 (LLMClient)</h4>
+                        <ul>
+                            <li>_merge_user_message()</li>
+                            <li>tool_result → image → text</li>
+                            <li>转为 canonical blocks</li>
+                        </ul>
+                    </div>
+                    <div class="sub-box">
+                        <h4>会话管理 (BaseSession)</h4>
+                        <ul>
+                            <li>history.append(message)</li>
+                            <li>trim_messages_history()</li>
+                            <li>_raw_ask(history)</li>
+                        </ul>
+                    </div>
+                </div>
+
+                <div class="arrow-down">↓</div>
+                <div class="flow-row">
+                    <div class="node node-data">协议转换<br><small>to_openai / to_anthropic</small></div>
+                    <span class="arrow">→</span>
+                    <div class="node node-method">openai_stream() / claude_stream()</div>
+                    <span class="arrow">→</span>
+                    <div class="node node-data">SSE 流式响应</div>
+                </div>
+
+                <div class="arrow-down">↓ 解析 Response</div>
+
+                <!-- Decision -->
+                <div class="flow-row" style="margin: 20px 0;">
+                    <div style="border:2px solid #d29922; padding:12px 24px; border-radius:8px; color:#d29922; font-weight:600;">
+                        响应类型判断
+                    </div>
+                </div>
+
+                <div class="grid-2" style="margin-top:16px;">
+                    <div style="text-align:center;">
+                        <div class="node node-tool" style="display:inline-block;">response.tool_calls 存在</div>
+                        <div class="arrow-down">↓</div>
+                        <div class="node node-method" style="display:inline-block;">run_tool(name, args)</div>
+                        <div class="arrow-down">↓</div>
+                        <div class="node node-method" style="display:inline-block;">compact_observation()</div>
+                        <div class="arrow-down">↓</div>
+                        <div class="node node-method" style="display:inline-block;">_handle_side_effects()</div>
+                        <div class="arrow-down">↓</div>
+                        <div style="color:#d29922; font-size:12px;">↩ 继续循环</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div class="node node-result" style="display:inline-block;">response.content (最终回答)</div>
+                        <div class="arrow-down">↓</div>
+                        <div class="node node-result" style="display:inline-block;">返回 {"ok": True, "final": content}</div>
+                        <div class="arrow-down">↓</div>
+                        <div style="color:#3fb950; font-size:12px;">✓ 任务完成</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 5. Tool System -->
+        <div class="section">
+            <div class="section-title">5. 工具系统 — tools/</div>
+            <div class="flow-row">
+                <div class="node node-method">@tool 装饰器注册</div>
+                <span class="arrow">→</span>
+                <div class="node node-method">run_tool(name, args)</div>
+                <span class="arrow">→</span>
+                <div class="node node-tool">具体工具执行</div>
+            </div>
+            <div class="arrow-down">↓</div>
+            <div class="grid-3">
+                <div class="sub-box">
+                    <h4>文件工具 (file_tools.py)</h4>
+                    <ul>
+                        <li>file_read 读取文件</li>
+                        <li>file_write 写入文件</li>
+                        <li>file_patch 补丁修改</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>代码工具 (code_tools.py)</h4>
+                    <ul>
+                        <li>code_run Python执行</li>
+                        <li>code_run Shell命令</li>
+                        <li>safety.py 安全检查</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>浏览器工具 (web_tools.py)</h4>
+                    <ul>
+                        <li>web_scan 页面扫描</li>
+                        <li>web_execute_js JS执行</li>
+                        <li>BrowserController CDP</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="grid-3">
+                <div class="sub-box">
+                    <h4>代理工具 (agent_tools.py)</h4>
+                    <ul>
+                        <li>ask_user 询问用户</li>
+                        <li>update_working_checkpoint</li>
+                        <li>start_long_term_update</li>
+                        <li>spawn_subagent 子代理</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>视觉工具 (vision_tools.py)</h4>
+                    <ul>
+                        <li>screenshot 截屏</li>
+                        <li>mss + Pillow 编码</li>
+                        <li>多模态分析</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>安全层 (safety.py)</h4>
+                    <ul>
+                        <li>路径边界检查</li>
+                        <li>危险模式拦截</li>
+                        <li>密钥文件保护</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 6. LLM Subsystem -->
+        <div class="section">
+            <div class="section-title">6. LLM 子系统 — llm/</div>
+            <div class="grid-2">
+                <div class="sub-box">
+                    <h4>会话管理</h4>
+                    <ul>
+                        <li>BaseSession — 单模型会话</li>
+                        <li>FailoverSession — 多模型故障转移</li>
+                        <li>轮询重试 + 弹回主模型</li>
+                        <li>SessionConfig 配置</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>上下文压缩 (context.py)</h4>
+                    <ul>
+                        <li>microcompact — 截断旧块</li>
+                        <li>full_compact — 折叠为摘要</li>
+                        <li>hard_trim — 硬截断</li>
+                        <li>repair_tool_pairs — 修复孤立块</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="grid-2" style="margin-top:12px;">
+                <div class="sub-box">
+                    <h4>协议适配 (protocols.py)</h4>
+                    <ul>
+                        <li>to_openai_messages()</li>
+                        <li>to_anthropic_messages()</li>
+                        <li>canonical → wire format</li>
+                    </ul>
+                </div>
+                <div class="sub-box">
+                    <h4>流式处理</h4>
+                    <ul>
+                        <li>openai_stream.py — SSE + retry</li>
+                        <li>claude_stream.py — thinking blocks</li>
+                        <li>yield chunks → Response</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <!-- 7. Memory System -->
+        <div class="section">
+            <div class="section-title">7. 记忆系统 — 四层架构</div>
+            <div class="flow-row">
+                <div class="node node-data" style="min-width:200px;">L1: 洞察索引<br><small>global_mem_insight.txt</small></div>
+                <span class="arrow">→</span>
+                <div class="node node-data" style="min-width:200px;">L2/L3: SOP 详细记忆<br><small>memory/*.md</small></div>
+                <span class="arrow">→</span>
+                <div class="node node-data" style="min-width:200px;">WorkingMemory<br><small>任务级短期记忆</small></div>
+                <span class="arrow">→</span>
+                <div class="node node-data" style="min-width:200px;">L4: 会话归档<br><small>data/l4_session/</small></div>
+            </div>
+            <div class="arrow-down">↓ ContextEngine 按预算组装</div>
+            <div class="flow-row">
+                <div class="node node-class" style="min-width:400px;">
+                    ContextEngine.assemble() — 总预算 12k 字符<br>
+                    <small style="color:#8b949e;">L1洞察 + 工作记忆 + 会话上下文 + 相关SOP</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- 8. Subagent -->
+        <div class="section">
+            <div class="section-title">8. 子代理系统 — subagent.py</div>
+            <div class="flow-row">
+                <div class="node node-method">spawn_subagent(tasks)</div>
+                <span class="arrow">→</span>
+                <div class="node node-class">ThreadPoolExecutor</div>
+                <span class="arrow">→</span>
+                <div class="node node-method">_run_subagent()</div>
+            </div>
+            <div class="arrow-down">↓ 每个子任务独立运行</div>
+            <div class="flow-row">
+                <div class="node node-class">独立 LLMClient</div>
+                <span class="arrow">→</span>
+                <div class="node node-class">独立 AgentLoop</div>
+                <span class="arrow">→</span>
+                <div class="node node-result">紧凑结果返回</div>
+            </div>
+        </div>
+
+        <!-- 9. TUI -->
+        <div class="section">
+            <div class="section-title">9. TUI 界面 — tui/</div>
+            <div class="flow-row">
+                <div class="node node-class">ChrysalisApp<br><small>Textual App</small></div>
+                <span class="arrow">→</span>
+                <div class="node node-class">AgentBridge<br><small>后台线程</small></div>
+                <span class="arrow">→</span>
+                <div class="node node-class">Kernel<br><small>完整执行</small></div>
+            </div>
+            <div class="arrow-down">↓ 事件驱动</div>
+            <div class="flow-row">
+                <div class="node node-data">StreamChunk</div>
+                <div class="node node-data">ToolCallStarted</div>
+                <div class="node node-data">ToolCallCompleted</div>
+                <div class="node node-data">FileDiff</div>
+                <div class="node node-data">AgentDone</div>
+            </div>
+        </div>
+
+        <!-- 10. Complete Flow Summary -->
+        <div class="section">
+            <div class="section-title">10. 完整调用链总结</div>
+            <div style="font-family: 'Consolas', monospace; font-size: 12px; line-height: 2; padding: 10px;">
+                <span style="color:#1f6feb;">CLI/TUI 输入</span>
+                → <span style="color:#f78166;">Kernel.run(task)</span>
+                → <span style="color:#3fb950;">AgentLoop.run()</span>
+                → <span style="color:#79c0ff;">ContextEngine.assemble()</span><br>
+                → <span style="color:#3fb950;">_run_function_calling()</span>
+                → <span style="color:#f78166;">LLMClient.chat()</span>
+                → <span style="color:#79c0ff;">BaseSession.ask()</span><br>
+                → <span style="color:#79c0ff;">trim_messages_history()</span>
+                → <span style="color:#d2a8ff;">openai_stream()/claude_stream()</span>
+                → <span style="color:#d29922;">Response 解析</span><br>
+                → <span style="color:#d2a8ff;">[tool_calls → run_tool() → observation → 继续循环]</span><br>
+                → <span style="color:#238636;">[final content → 返回结果 → 记录用量]</span>
+            </div>
+        </div>
+
+    </div>
+</body>
+</html>

@@ -79,7 +79,7 @@ def microcompact_history(
     max_text_tag: int = _MAX_TEXT_TAG,
     force: bool = False,
 ) -> None:
-    """Shrink bulky old blocks while preserving message structure."""
+    """压缩臃肿的旧历史块，同时保留消息结构。"""
 
     if len(history) <= keep_recent and not force:
         return
@@ -96,12 +96,10 @@ def full_compact_history(
     target_chars: int,
     keep_recent_turns: int = _RECENT_TURNS_TO_KEEP,
 ) -> None:
-    """Fold early history into one structured user summary message.
+    """将早期历史记录折叠（合并）为一条结构化的用户摘要消息。
 
-    This is deterministic for now.  An LLM summarizer can later replace
-    _summarize_messages while keeping the same insertion point and invariant:
-    the summary must preserve identifiers such as paths, commands, tool names,
-    errors, decisions, and unfinished tasks.
+    目前该过程是确定性的（即基于固定规则，而非基于大模型）。未来可以使用 LLM 摘要器（summarizer）来替换 `_summarize_messages`，同时保持相同的插入点（insertion point）和核心约束（invariant）：
+    摘要必须保留关键的标识符，例如路径、命令、工具名称、错误信息、决策以及未完成的任务。
     """
 
     if any(msg.get(_FULL_COMPACT_KEY) for msg in history):
@@ -139,7 +137,7 @@ def drop_oldest_turn(history: list[dict]) -> None:
 
 
 def repair_tool_pairs(history: list[dict]) -> None:
-    """Remove broken protocol blocks caused by loading or trimming history."""
+    """移除因加载或裁剪历史记录而导致的残缺协议块。"""
 
     for i, msg in enumerate(history):
         role = msg.get("role")
@@ -158,6 +156,7 @@ def repair_tool_pairs(history: list[dict]) -> None:
         elif role == "user":
             prev_msg = history[i - 1] if i > 0 else None
             valid_ids = _tool_use_ids(prev_msg) if prev_msg else set()
+            # 核心逻辑：如果这一轮 User 提供了一些工具结果，但这些结果的 ID 并没有在上一轮被大模型请求过（也就是成了“孤儿结果”），就把它们转换成普通文本或者处理掉。
             _convert_orphan_tool_results(msg, valid_ids)
 
     history[:] = [msg for msg in history if _has_blocks(msg)]
