@@ -16,6 +16,18 @@ ApplicationWindow {
     property string renameSessionId: ""
     property string activePage: "chat"
 
+    onVisibilityChanged: {
+        if (window.visibility === Window.Minimized) {
+            return
+        }
+    }
+
+    onClosing: function(close) {
+        if (backend) {
+            backend.shutdown()
+        }
+    }
+
     QtObject {
         id: settingsState
         property bool enabled: false
@@ -201,6 +213,257 @@ ApplicationWindow {
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
             onClicked: root.clicked()
+        }
+    }
+
+    component TaskJumpRow: Rectangle {
+        id: root
+        property string title: ""
+        property string summary: ""
+        property string status: ""
+        signal clicked()
+
+        height: 36
+        radius: 4
+        color: area.containsMouse ? theme.panelHover : "transparent"
+        border.color: theme.line
+        border.width: 1
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 1
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    text: root.title
+                    color: theme.text
+                    font.family: theme.mono
+                    font.pixelSize: 10
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
+
+                Text {
+                    text: root.status
+                    color: theme.purple
+                    font.family: theme.mono
+                    font.pixelSize: 9
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: root.summary
+                color: theme.muted
+                font.family: theme.mono
+                font.pixelSize: 9
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: area
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.clicked()
+        }
+    }
+
+    component TodoLine: Rectangle {
+        id: root
+        property string title: ""
+        property string note: ""
+        property string status: ""
+        property bool active: false
+
+        height: Math.max(36, lineColumn.implicitHeight + 12)
+        radius: 4
+        color: active ? theme.panelHover : "transparent"
+        border.color: active ? theme.purple : theme.line
+        border.width: 1
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 6
+
+            Text {
+                text: status === "completed" ? "✓" : "•"
+                color: active ? theme.purple : theme.muted
+                font.family: theme.mono
+                font.pixelSize: 11
+            }
+
+            ColumnLayout {
+                id: lineColumn
+                Layout.fillWidth: true
+                spacing: 2
+
+                Text {
+                    Layout.fillWidth: true
+                    text: root.title
+                    color: theme.text
+                    font.family: theme.mono
+                    font.pixelSize: 12
+                    font.bold: active
+                    wrapMode: Text.Wrap
+                }
+
+                Text {
+                    visible: root.note.length > 0
+                    Layout.fillWidth: true
+                    text: root.note
+                    color: theme.muted
+                    font.family: theme.mono
+                    font.pixelSize: 10
+                    wrapMode: Text.Wrap
+                }
+            }
+        }
+    }
+
+    component TodoPanel: Rectangle {
+        id: root
+        property var snapshot: ({})
+
+        radius: 4
+        color: theme.panel
+        border.color: theme.line
+        border.width: 1
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 10
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "Todo"
+                    color: theme.text
+                    font.family: theme.mono
+                    font.pixelSize: 13
+                    font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                    text: (root.snapshot.pending_count || 0) + "/" + (root.snapshot.total_count || 0)
+                    color: theme.purple
+                    font.family: theme.mono
+                    font.pixelSize: 11
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: !!root.snapshot.goal
+                text: root.snapshot.goal || ""
+                color: theme.muted
+                font.family: theme.mono
+                font.pixelSize: 12
+                wrapMode: Text.Wrap
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: "Round " + (root.snapshot.rounds_since_todo || 0) + " / " + (root.snapshot.todo_reminder_interval || 4)
+                color: theme.faint
+                font.family: theme.mono
+                font.pixelSize: 10
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: 1
+                color: theme.line
+            }
+
+            ListView {
+                id: todoList
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+                spacing: 6
+                model: root.snapshot.todos || []
+                boundsBehavior: Flickable.StopAtBounds
+
+                ScrollBar.vertical: ScrollBar {
+                    policy: ScrollBar.AsNeeded
+                    active: true
+                    width: 8
+                }
+
+                delegate: TodoLine {
+                    width: todoList.width
+                    title: modelData.title || ""
+                    note: modelData.note || ""
+                    status: modelData.status || ""
+                    active: modelData.id === (root.snapshot.active_todo_id || "")
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                visible: !root.snapshot.todos || root.snapshot.todos.length === 0
+                text: "No TODOs yet"
+                color: theme.muted
+                font.family: theme.mono
+                font.pixelSize: 10
+            }
+        }
+    }
+
+    component TodoSidebar: Rectangle {
+        id: root
+        property var snapshot: ({})
+
+        radius: 4
+        color: theme.sidebar
+        border.color: theme.line
+        border.width: 1
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 8
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                Text {
+                    text: "Task TODO"
+                    color: theme.text
+                    font.family: theme.mono
+                    font.pixelSize: 12
+                    font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                    text: (root.snapshot.pending_count || 0) + "/" + (root.snapshot.total_count || 0)
+                    color: theme.purple
+                    font.family: theme.mono
+                    font.pixelSize: 10
+                }
+            }
+
+            TodoPanel {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                snapshot: root.snapshot
+            }
         }
     }
 
@@ -521,7 +784,20 @@ ApplicationWindow {
                 }
 
                 Text {
-                    text: root.busy ? "running" : (root.pinned ? "pin" : "")
+                    visible: !root.busy && root.pinned
+                    text: "pin"
+                    color: theme.yellow
+                    font.family: theme.mono
+                    font.pixelSize: 11
+                }
+
+                SessionSpinner {
+                    running: root.busy
+                }
+
+                Text {
+                    visible: root.busy
+                    text: "running"
                     color: root.busy ? theme.blue : theme.yellow
                     font.family: theme.mono
                     font.pixelSize: 11
@@ -547,6 +823,41 @@ ApplicationWindow {
                 sessionList.currentIndex = index
                 backend.activate_session_row(index)
             }
+        }
+    }
+
+    component SessionSpinner: Item {
+        id: root
+        property bool running: false
+
+        width: 12
+        height: 12
+        visible: running
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 6
+            color: "transparent"
+            border.color: theme.blue
+            border.width: 2
+            opacity: 0.35
+        }
+
+        Rectangle {
+            width: 3
+            height: 5
+            radius: 1.5
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.top: parent.top
+            color: theme.blue
+        }
+
+        RotationAnimator on rotation {
+            from: 0
+            to: 360
+            duration: 900
+            loops: Animation.Infinite
+            running: root.visible
         }
     }
 
@@ -957,7 +1268,9 @@ ApplicationWindow {
                         Connections {
                             target: backend
                             function onActiveSessionChanged() {
-                                sessionList.currentIndex = backend.active_session_index
+                                if (window.visibility !== Window.Minimized) {
+                                    sessionList.currentIndex = backend.active_session_index
+                                }
                             }
                         }
                     }
@@ -979,165 +1292,317 @@ ApplicationWindow {
                             Layout.fillHeight: true
                             clip: true
 
-                            ListView {
-                                id: logList
+                            RowLayout {
                                 anchors.fill: parent
                                 anchors.leftMargin: 18
-                                anchors.rightMargin: 8
+                                anchors.rightMargin: 10
                                 anchors.topMargin: 14
-                                anchors.bottomMargin: chatFooter.height + 14
-                                model: backend ? backend.active_session_object.messages_model_object : null
-                                clip: true
-                                spacing: 0
-                                boundsBehavior: Flickable.StopAtBounds
+                                anchors.bottomMargin: 14
+                                spacing: 12
 
-                                ScrollBar.vertical: ScrollBar {
-                                    policy: ScrollBar.AlwaysOn
-                                    active: true
-                                    width: 10
-                                }
+                                Item {
+                                    Layout.fillWidth: true
+                                    Layout.fillHeight: true
 
-                                property bool stickToBottom: true
-                                onContentYChanged: stickToBottom = contentHeight - (contentY + height) < 50
-                                onCountChanged: if (stickToBottom) positionViewAtEnd()
-                                onContentHeightChanged: if (stickToBottom) positionViewAtEnd()
-
-                                delegate: LogRow {
-                                    rowIndex: index
-                                    kind: model.kind
-                                    role: model.role
-                                    content: model.content
-                                    title: model.title
-                                    summary: model.summary
-                                    details: model.details
-                                    expanded: model.expanded
-                                    status: model.status
-                                    streaming: model.streaming
-                                }
-                            }
-
-                            Rectangle {
-                                id: chatFooter
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.bottom: parent.bottom
-                                height: backend && backend.attachment_count > 0 ? 100 : 54
-                                color: theme.bg
-                                border.color: theme.line
-                                border.width: 1
-
-                                ColumnLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 12
-                                    anchors.rightMargin: 12
-                                    anchors.topMargin: 8
-                                    anchors.bottomMargin: 8
-                                    spacing: 6
-
-                                    Flickable {
-                                        id: attachmentStrip
-                                        visible: backend && backend.attachment_count > 0
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: visible ? 34 : 0
-                                        contentWidth: attachmentRow.implicitWidth
-                                        contentHeight: height
+                                    ListView {
+                                        id: logList
+                                        anchors.fill: parent
+                                        anchors.bottomMargin: chatFooter.height + 14
+                                        model: backend ? backend.active_session_object.messages_model_object : null
                                         clip: true
+                                        spacing: 0
                                         boundsBehavior: Flickable.StopAtBounds
 
-                                        RowLayout {
-                                            id: attachmentRow
-                                            height: parent.height
+                                        ScrollBar.vertical: ScrollBar {
+                                            policy: ScrollBar.AlwaysOn
+                                            active: true
+                                            width: 10
+                                        }
+
+                                        property bool stickToBottom: true
+                                        onContentYChanged: stickToBottom = contentHeight - (contentY + height) < 50
+                                        onCountChanged: if (stickToBottom) positionViewAtEnd()
+                                        onContentHeightChanged: if (stickToBottom) positionViewAtEnd()
+                                        onModelChanged: positionViewAtEnd()
+
+                                        delegate: LogRow {
+                                            rowIndex: index
+                                            kind: model.kind
+                                            role: model.role
+                                            content: model.content
+                                            title: model.title
+                                            summary: model.summary
+                                            details: model.details
+                                            expanded: model.expanded
+                                            status: model.status
+                                            streaming: model.streaming
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        id: chatFooter
+                                        anchors.left: parent.left
+                                        anchors.right: parent.right
+                                        anchors.bottom: parent.bottom
+                                        height: backend && backend.attachment_count > 0 ? 100 : 54
+                                        color: theme.bg
+                                        border.color: theme.line
+                                        border.width: 1
+
+                                        ColumnLayout {
+                                            anchors.fill: parent
+                                            anchors.leftMargin: 12
+                                            anchors.rightMargin: 12
+                                            anchors.topMargin: 8
+                                            anchors.bottomMargin: 8
                                             spacing: 6
 
-                                            Repeater {
-                                                model: backend ? backend.attachments_model_object : null
+                                            Flickable {
+                                                id: attachmentStrip
+                                                visible: backend && backend.attachment_count > 0
+                                                Layout.fillWidth: true
+                                                Layout.preferredHeight: visible ? 34 : 0
+                                                contentWidth: attachmentRow.implicitWidth
+                                                contentHeight: height
+                                                clip: true
+                                                boundsBehavior: Flickable.StopAtBounds
 
-                                                delegate: Rectangle {
-                                                    Layout.preferredWidth: Math.min(260, Math.max(130, attachmentText.implicitWidth + removeAttachment.implicitWidth + 30))
-                                                    Layout.preferredHeight: 28
-                                                    radius: 4
-                                                    color: theme.shell
-                                                    border.color: theme.line
-                                                    border.width: 1
+                                                RowLayout {
+                                                    id: attachmentRow
+                                                    height: parent.height
+                                                    spacing: 6
 
-                                                    RowLayout {
-                                                        anchors.fill: parent
-                                                        anchors.leftMargin: 8
-                                                        anchors.rightMargin: 4
-                                                        spacing: 6
+                                                    Repeater {
+                                                        model: backend ? backend.attachments_model_object : null
 
-                                                        Text {
-                                                            id: attachmentText
-                                                            Layout.fillWidth: true
-                                                            text: model.kind + ": " + model.name
-                                                            color: theme.text
-                                                            font.family: theme.mono
-                                                            font.pixelSize: 11
-                                                            elide: Text.ElideRight
-                                                        }
+                                                        delegate: Rectangle {
+                                                            Layout.preferredWidth: Math.min(260, Math.max(130, attachmentText.implicitWidth + removeAttachment.implicitWidth + 30))
+                                                            Layout.preferredHeight: 28
+                                                            radius: 4
+                                                            color: theme.shell
+                                                            border.color: theme.line
+                                                            border.width: 1
 
-                                                        Text {
-                                                            id: removeAttachment
-                                                            text: "x"
-                                                            color: removeArea.containsMouse ? theme.red : theme.muted
-                                                            font.family: theme.mono
-                                                            font.pixelSize: 12
-                                                            font.bold: true
-
-                                                            MouseArea {
-                                                                id: removeArea
+                                                            RowLayout {
                                                                 anchors.fill: parent
-                                                                anchors.margins: -6
-                                                                hoverEnabled: true
-                                                                cursorShape: Qt.PointingHandCursor
-                                                                onClicked: backend.remove_attachment(index)
+                                                                anchors.leftMargin: 8
+                                                                anchors.rightMargin: 4
+                                                                spacing: 6
+
+                                                                Text {
+                                                                    id: attachmentText
+                                                                    Layout.fillWidth: true
+                                                                    text: model.kind + ": " + model.name
+                                                                    color: theme.text
+                                                                    font.family: theme.mono
+                                                                    font.pixelSize: 11
+                                                                    elide: Text.ElideRight
+                                                                }
+
+                                                                Text {
+                                                                    id: removeAttachment
+                                                                    text: "x"
+                                                                    color: removeArea.containsMouse ? theme.red : theme.muted
+                                                                    font.family: theme.mono
+                                                                    font.pixelSize: 12
+                                                                    font.bold: true
+
+                                                                    MouseArea {
+                                                                        id: removeArea
+                                                                        anchors.fill: parent
+                                                                        anchors.margins: -6
+                                                                        hoverEnabled: true
+                                                                        cursorShape: Qt.PointingHandCursor
+                                                                        onClicked: backend.remove_attachment(index)
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
+
+                                            RowLayout {
+                                                Layout.fillWidth: true
+                                                Layout.fillHeight: true
+                                                spacing: 8
+
+                                                Text {
+                                                    text: ">"
+                                                    color: theme.purple
+                                                    font.family: theme.mono
+                                                    font.pixelSize: 18
+                                                    font.bold: true
+                                                }
+
+                                                TextField {
+                                                    id: taskInput
+                                                    Layout.fillWidth: true
+                                                    enabled: !(backend && backend.busy_state)
+                                                    placeholderText: "Type a task..."
+                                                    color: theme.text
+                                                    placeholderTextColor: theme.muted
+                                                    font.family: theme.mono
+                                                    font.pixelSize: 14
+                                                    background: Rectangle { color: "transparent" }
+                                                    Component.onCompleted: text = backend ? backend.draft_text : ""
+                                                    Connections {
+                                                        target: backend
+                                                        function onActiveSessionChanged() {
+                                                            if (backend) {
+                                                                taskInput.text = backend.draft_text
+                                                            }
+                                                        }
+                                                    }
+                                                    onTextChanged: if (backend) backend.save_draft(text)
+                                                    onAccepted: submitTask()
+                                                }
+
+                                                TinyButton {
+                                                    Layout.preferredWidth: 82
+                                                    text: "Attach"
+                                                    onClicked: attachmentDialog.open()
+                                                }
+
+                                                TinyButton {
+                                                    Layout.preferredWidth: 82
+                                                    text: backend && backend.busy_state ? "Running" : "Send"
+                                                    primary: !(backend && backend.busy_state)
+                                                    onClicked: submitTask()
+                                                }
+                                            }
                                         }
                                     }
 
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        Layout.fillHeight: true
-                                        spacing: 8
+                                    Item {
+                                        id: todoOverlay
+                                        anchors.top: parent.top
+                                        anchors.right: parent.right
+                                        anchors.topMargin: 14
+                                        anchors.rightMargin: 18
+                                        width: 420
+                                        height: Math.min(parent.height * 0.58, 520)
+                                        z: 18
+                                        visible: backend
+                                                 && backend.busy_state
+                                                 && backend.active_session_object
+                                                 && backend.active_session_object.working_snapshot
+                                                 && backend.active_session_object.working_snapshot.todos
+                                                 && backend.active_session_object.working_snapshot.todos.length > 0
 
-                                        Text {
-                                            text: ">"
+                                        TodoPanel {
+                                            id: todoOverlayContent
+                                            anchors.fill: parent
+                                            snapshot: backend && backend.active_session_object ? backend.active_session_object.working_snapshot : ({})
+                                        }
+                                    }
+
+                                Item {
+                                    id: taskNavHost
+                                    anchors.top: parent.top
+                                    anchors.right: parent.right
+                                    anchors.bottom: parent.bottom
+                                    width: taskPanel.visible ? 284 : 8
+                                    z: 20
+
+                                            property bool navOpen: false
+
+                                            Timer {
+                                                id: navCloseTimer
+                                                interval: 160
+                                                repeat: false
+                                                onTriggered: taskNavHost.navOpen = false
+                                            }
+
+                                            HoverHandler {
+                                                id: navHoverHandler
+                                                target: taskNavHost
+                                                acceptedDevices: PointerDevice.Mouse
+                                                onHoveredChanged: {
+                                                    if (hovered) {
+                                                        navCloseTimer.stop()
+                                                        taskNavHost.navOpen = true
+                                                    } else {
+                                                        navCloseTimer.restart()
+                                                    }
+                                                }
+                                            }
+
+                                            Rectangle {
+                                                id: taskPanel
+                                                visible: taskNavHost.navOpen
+                                                anchors.top: parent.top
+                                                anchors.bottom: parent.bottom
+                                                anchors.right: parent.right
+                                                width: 280
+                                                radius: 6
+                                                color: theme.sidebar
+                                                border.color: theme.line
+                                                border.width: 1
+
+                                                ColumnLayout {
+                                                    anchors.fill: parent
+                                                    anchors.margins: 10
+                                                    spacing: 8
+
+                                                    RowLayout {
+                                                        Layout.fillWidth: true
+
+                                                        Text {
+                                                            text: "Tasks"
+                                                            color: theme.text
+                                                            font.family: theme.mono
+                                                            font.pixelSize: 12
+                                                            font.bold: true
+                                                        }
+
+                                                        Item { Layout.fillWidth: true }
+
+                                                        Text {
+                                                            text: "jump"
+                                                            color: theme.muted
+                                                            font.family: theme.mono
+                                                            font.pixelSize: 10
+                                                        }
+                                                    }
+
+                                                    ListView {
+                                                        id: turnNavList
+                                                        Layout.fillWidth: true
+                                                        Layout.fillHeight: true
+                                                        clip: true
+                                                        spacing: 6
+                                                        model: backend ? backend.active_session_object.turns_model_object : null
+                                                        boundsBehavior: Flickable.StopAtBounds
+
+                                                        ScrollBar.vertical: ScrollBar {
+                                                            policy: ScrollBar.AsNeeded
+                                                            active: true
+                                                            width: 8
+                                                        }
+
+                                        delegate: TaskJumpRow {
+                                                            width: turnNavList.width
+                                                            title: model.title
+                                                            summary: model.summary
+                                                            status: model.status
+                                                            onClicked: {
+                                                                logList.positionViewAtIndex(model.rowIndex, ListView.Beginning)
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+
+                                        Rectangle {
+                                            id: spine
+                                            visible: true
+                                            anchors.verticalCenter: parent.verticalCenter
+                                            anchors.right: parent.right
+                                            width: 4
+                                            height: 120
+                                            radius: 2
                                             color: theme.purple
-                                            font.family: theme.mono
-                                            font.pixelSize: 18
-                                            font.bold: true
-                                        }
-
-                                        TextField {
-                                            id: taskInput
-                                            Layout.fillWidth: true
-                                            enabled: !(backend && backend.busy_state)
-                                            placeholderText: "Type a task..."
-                                            color: theme.text
-                                            placeholderTextColor: theme.muted
-                                            font.family: theme.mono
-                                            font.pixelSize: 14
-                                            background: Rectangle { color: "transparent" }
-                                            Component.onCompleted: text = backend ? backend.draft_text : ""
-                                            onTextChanged: if (backend) backend.save_draft(text)
-                                            onAccepted: submitTask()
-                                        }
-
-                                        TinyButton {
-                                            Layout.preferredWidth: 82
-                                            text: "Attach"
-                                            onClicked: attachmentDialog.open()
-                                        }
-
-                                        TinyButton {
-                                            Layout.preferredWidth: 82
-                                            text: backend && backend.busy_state ? "Running" : "Send"
-                                            primary: !(backend && backend.busy_state)
-                                            onClicked: submitTask()
                                         }
                                     }
                                 }

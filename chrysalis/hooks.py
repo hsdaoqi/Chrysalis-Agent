@@ -74,3 +74,12 @@ class HookManager:
             data=dict(value.get("data", {})),
         )
 
+
+class DisabledHookManager(HookManager):
+    """Hook manager that never blocks runtime execution."""
+
+    def add(self, event: HookEvent, callback: HookCallback) -> None:
+        return None
+
+    def emit(self, event: HookEvent, context: HookContext) -> HookOutcome:
+        return HookOutcome()

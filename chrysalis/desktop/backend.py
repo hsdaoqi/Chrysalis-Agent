@@ -55,6 +55,14 @@ class DesktopAttachment:
     summary: str
 
 
+@dataclass(frozen=True)
+class TurnAnchor:
+    row_index: int
+    title: str
+    summary: str
+    status: str
+
+
 class MessageListModel(QAbstractListModel):
     KindRole = Qt.UserRole + 1
     RoleRole = Qt.UserRole + 2
@@ -228,9 +236,64 @@ class AttachmentListModel(QAbstractListModel):
         return True
 
 
+class TurnListModel(QAbstractListModel):
+    RowIndexRole = Qt.UserRole + 1
+    TitleRole = Qt.UserRole + 2
+    SummaryRole = Qt.UserRole + 3
+    StatusRole = Qt.UserRole + 4
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._items: list[TurnAnchor] = []
+
+    def roleNames(self) -> dict[int, bytes]:
+        return {
+            self.RowIndexRole: b"rowIndex",
+            self.TitleRole: b"title",
+            self.SummaryRole: b"summary",
+            self.StatusRole: b"status",
+        }
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        if parent.isValid():
+            return 0
+        return len(self._items)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        if row < 0 or row >= len(self._items):
+            return None
+        item = self._items[row]
+        if role == self.RowIndexRole:
+            return item.row_index
+        if role == self.TitleRole:
+            return item.title
+        if role == self.SummaryRole:
+            return item.summary
+        if role == self.StatusRole:
+            return item.status
+        return None
+
+    def clear(self) -> None:
+        if not self._items:
+            return
+        self.beginResetModel()
+        self._items.clear()
+        self.endResetModel()
+
+    def set_items(self, items: list[TurnAnchor]) -> None:
+        self.beginResetModel()
+        self._items = list(items)
+        self.endResetModel()
+
+
 class SessionController(QObject):
     statusChanged = Signal()
     messagesChanged = Signal()
+    turnsChanged = Signal()
+    workingChanged = Signal()
     busyChanged = Signal()
     titleChanged = Signal()
     modelNameChanged = Signal()
@@ -244,6 +307,7 @@ class SessionController(QObject):
         self.status = "ready"
         self.busy = False
         self.messages_model = MessageListModel()
+        self.turns_model = TurnListModel()
         self._event_queue: queue.SimpleQueue[tuple[str, object]] = queue.SimpleQueue()
         self._stream_timer = QTimer(self)
         self._stream_timer.setInterval(33)
@@ -255,6 +319,7 @@ class SessionController(QObject):
         self._turn = 0
         self._file_before: dict[str, str] = {}
         self._pending_config: AgentConfig | None = None
+        self._working_snapshot: dict = {}
         self._bind_kernel()
         self._stream_timer.start()
 
@@ -262,6 +327,7 @@ class SessionController(QObject):
         self.kernel.loop.on_stream_chunk = self._on_stream_chunk
         self.kernel.loop.on_tool_call = self._on_tool_call
         self.kernel.loop.on_thinking = self._on_thinking
+        self.kernel.loop.on_working_change = self._on_working_change
         if self.kernel.session_store.current_id == self.session_id:
             self.refresh_from_kernel()
         else:
@@ -271,6 +337,10 @@ class SessionController(QObject):
     @Property(QObject, notify=messagesChanged)
     def messages_model_object(self) -> MessageListModel:
         return self.messages_model
+
+    @Property(QObject, notify=turnsChanged)
+    def turns_model_object(self) -> TurnListModel:
+        return self.turns_model
 
     @Property(str, notify=statusChanged)
     def status_text(self) -> str:
@@ -288,13 +358,23 @@ class SessionController(QObject):
     def model_name_text(self) -> str:
         return self.model_name
 
-    def refresh_from_kernel(self) -> None:
-        self.messages_model.set_messages(self._history_messages(self.kernel.llm.history))
+    @Property("QVariantMap", notify=workingChanged)
+    def working_snapshot(self) -> dict:
+        return self._working_snapshot
+
+    def refresh_from_kernel(self, force: bool = False) -> None:
+        self._working_snapshot = self.kernel.loop.working.todo_snapshot()
         self.title = self._session_title()
         self.model_name = self.kernel.active_model_name
         self.titleChanged.emit()
         self.modelNameChanged.emit()
+        self.workingChanged.emit()
+        if self.busy and not force:
+            return
+        self.messages_model.set_messages(self._history_messages(self.kernel.llm.history))
+        self.turns_model.set_items(self._task_anchors(self.messages_model._messages))
         self.messagesChanged.emit()
+        self.turnsChanged.emit()
 
     def apply_config(self, config: AgentConfig) -> None:
         if self.busy:
@@ -317,9 +397,9 @@ class SessionController(QObject):
         self._reset_turn_state()
         self.busy = True
         self.status = "thinking"
+        self._emit_flags()
         self.messages_model.append(DesktopMessage(kind="user", role="user", content=display_task, title=">"))
         self.messages_model.append(DesktopMessage(kind="spacer"))
-        self._emit_flags()
 
         def worker() -> None:
             try:
@@ -347,6 +427,7 @@ class SessionController(QObject):
     def new_session(self) -> str:
         self.session_id = self.kernel.new_session()
         self.messages_model.clear()
+        self.turns_model.clear()
         self._append_banner()
         self.status = "ready"
         self.busy = False
@@ -362,6 +443,7 @@ class SessionController(QObject):
         changed_messages = False
         changed_status = False
         changed_busy = False
+        changed_working = False
         while True:
             try:
                 kind, payload = self._event_queue.get_nowait()
@@ -404,13 +486,20 @@ class SessionController(QObject):
             elif kind == "busy":
                 self.busy = bool(payload)
                 changed_busy = True
+            elif kind == "working":
+                self._working_snapshot = payload if isinstance(payload, dict) else {}
+                changed_working = True
 
         if changed_messages:
+            self.turns_model.set_items(self._task_anchors(self.messages_model._messages))
             self.messagesChanged.emit()
+            self.turnsChanged.emit()
         if changed_status:
             self.statusChanged.emit()
         if changed_busy:
             self.busyChanged.emit()
+        if changed_working:
+            self.workingChanged.emit()
 
     def _on_stream_chunk(self, chunk: str) -> None:
         if chunk:
@@ -431,6 +520,9 @@ class SessionController(QObject):
     def _on_thinking(self, text: str) -> None:
         if text:
             self._queue_event(("thinking", text))
+
+    def _on_working_change(self, snapshot: dict) -> None:
+        self._queue_event(("working", snapshot))
 
     def _append_banner(self) -> None:
         self.messages_model.append(DesktopMessage(kind="system", content="Chrysalis v0.1 / autonomous agent"))
@@ -604,6 +696,23 @@ class SessionController(QObject):
         self.messages_model.append(DesktopMessage(kind="spacer"))
         self._reset_turn_state()
         self.refresh_from_kernel()
+
+    def _task_anchors(self, messages: list[DesktopMessage]) -> list[TurnAnchor]:
+        items: list[TurnAnchor] = []
+        latest_user_row = -1
+        for idx, msg in enumerate(messages):
+            if msg.kind == "user":
+                latest_user_row = idx
+        for idx, msg in enumerate(messages):
+            if msg.kind != "user":
+                continue
+            task_number = len(items) + 1
+            text = " ".join(str(msg.content).split())
+            title = self._compact_text(text, 72) or f"Task {task_number}"
+            summary = f"Task {task_number}"
+            status = "running" if self.busy and idx == latest_user_row else "done"
+            items.append(TurnAnchor(row_index=idx, title=title, summary=summary, status=status))
+        return items
 
     def _capture_file_before(self, tool: str, args: dict) -> None:
         if tool not in _FILE_MODIFY_TOOLS:
@@ -818,6 +927,13 @@ class DesktopSessionModel(QAbstractTableModel):
             return False
         return None
 
+    def refresh_all(self) -> None:
+        if not self._controllers:
+            return
+        top_left = self.index(0, 0)
+        bottom_right = self.index(len(self._controllers) - 1, 0)
+        self.dataChanged.emit(top_left, bottom_right, list(self.roleNames().keys()))
+
 
 class DesktopBackend(QObject):
     statusChanged = Signal()
@@ -840,8 +956,12 @@ class DesktopBackend(QObject):
         self._recovery_path = self.config.data_dir / "desktop_recovery.json"
         self._settings_path = self.config.data_dir / "desktop_settings.json"
         self._settings = self._load_settings()
-        self._draft_text = self._load_recovery_text()
+        self._draft_texts = self._load_recovery_texts()
+        self._draft_text = ""
+        self._shutting_down = False
         self._load_sessions()
+        self._migrate_legacy_draft()
+        self._sync_active_draft()
 
     @Property(QObject, notify=sessionsChanged)
     def sessions_model_object(self) -> DesktopSessionModel:
@@ -871,7 +991,7 @@ class DesktopBackend(QObject):
 
     @Property(str, notify=recoveryChanged)
     def draft_text(self) -> str:
-        return self._draft_text
+        return self._current_draft_text()
 
     @Property(QObject, notify=attachmentsChanged)
     def attachments_model_object(self) -> AttachmentListModel:
@@ -898,17 +1018,22 @@ class DesktopBackend(QObject):
         self._reload_controllers()
         self.sessionsChanged.emit()
         self.activeSessionChanged.emit()
+        self.recoveryChanged.emit()
         self.statusChanged.emit()
 
     @Slot()
     def new_session(self) -> str:
-        controller = self._ensure_session()
-        sid = controller.new_session()
-        self._active_index = self._controllers.index(controller)
+        controller = self._create_controller_from_new_session()
+        self._controllers.append(controller)
+        self._session_model = DesktopSessionModel(self._controllers)
+        self._active_index = len(self._controllers) - 1
+        self._draft_texts[controller.session_id] = ""
+        self._sync_active_draft()
         self.activeSessionChanged.emit()
         self.sessionsChanged.emit()
+        self.recoveryChanged.emit()
         self.statusChanged.emit()
-        return sid
+        return controller.session_id
 
     @Slot(str)
     def load_session(self, session_id: str) -> None:
@@ -917,6 +1042,7 @@ class DesktopBackend(QObject):
             controller = self._create_controller(session_id)
         self._active_index = self._controllers.index(controller)
         self.activeSessionChanged.emit()
+        self.recoveryChanged.emit()
         self.statusChanged.emit()
         self.sessionsChanged.emit()
 
@@ -927,14 +1053,17 @@ class DesktopBackend(QObject):
             controller.cancel_task()
         if not self._session_store.delete(session_id):
             return False
+        self._draft_texts.pop(session_id, None)
         self._controllers = [c for c in self._controllers if c.session_id != session_id]
         if not self._controllers:
             self._ensure_session()
         if self._active_index >= len(self._controllers):
             self._active_index = max(0, len(self._controllers) - 1)
         self._session_model = DesktopSessionModel(self._controllers)
+        self._sync_active_draft()
         self.sessionsChanged.emit()
         self.activeSessionChanged.emit()
+        self.recoveryChanged.emit()
         self.statusChanged.emit()
         return True
 
@@ -990,6 +1119,20 @@ class DesktopBackend(QObject):
     def clear_attachments(self) -> None:
         if self._attachment_model.clear():
             self.attachmentsChanged.emit()
+
+    @Slot()
+    def shutdown(self) -> None:
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        for controller in list(self._controllers):
+            controller.cancel_task()
+            if controller._stream_timer.isActive():
+                controller._stream_timer.stop()
+            worker = controller._worker
+            if worker is not None and worker.is_alive() and worker is not threading.current_thread():
+                worker.join(timeout=5.0)
+            controller._worker = None
 
     @Slot(result=str)
     def load_settings_text(self) -> str:
@@ -1054,10 +1197,13 @@ class DesktopBackend(QObject):
 
     @Slot(str)
     def save_draft(self, text: str) -> None:
+        session_id = self._active_session_id()
+        if session_id:
+            self._draft_texts[session_id] = text
         self._draft_text = text
         data = {
-            "text": text,
-            "session_id": self.active_session_object.session_id if self._controllers else "",
+            "draft_texts": self._draft_texts,
+            "active_session_id": session_id,
             "updated_at": datetime.now().isoformat(timespec="seconds"),
         }
         try:
@@ -1099,8 +1245,11 @@ class DesktopBackend(QObject):
     def set_session_filter(self, query: str) -> None:
         self._session_filter = query.strip().lower()
         self._reload_controllers()
+        if self._controllers and self._active_index >= len(self._controllers):
+            self._active_index = len(self._controllers) - 1
         self.sessionsChanged.emit()
         self.activeSessionChanged.emit()
+        self.recoveryChanged.emit()
 
     @Slot(int)
     def activate_session_row(self, row: int) -> None:
@@ -1142,6 +1291,8 @@ class DesktopBackend(QObject):
         controller.messagesChanged.connect(self.sessionsChanged.emit)
         controller.statusChanged.connect(self.statusChanged.emit)
         controller.busyChanged.connect(self.statusChanged.emit)
+        controller.busyChanged.connect(self.sessionsChanged.emit)
+        controller.busyChanged.connect(self._refresh_session_rows)
         controller.titleChanged.connect(self.sessionsChanged.emit)
         controller.modelNameChanged.connect(self.modelNameChanged.emit)
         return controller
@@ -1152,6 +1303,8 @@ class DesktopBackend(QObject):
         controller.messagesChanged.connect(self.sessionsChanged.emit)
         controller.statusChanged.connect(self.statusChanged.emit)
         controller.busyChanged.connect(self.statusChanged.emit)
+        controller.busyChanged.connect(self.sessionsChanged.emit)
+        controller.busyChanged.connect(self._refresh_session_rows)
         controller.titleChanged.connect(self.sessionsChanged.emit)
         controller.modelNameChanged.connect(self.modelNameChanged.emit)
         return controller
@@ -1166,6 +1319,10 @@ class DesktopBackend(QObject):
         sessions = self._filtered_sessions()
         existing = {controller.session_id: controller for controller in self._controllers}
         new_controllers: list[SessionController] = []
+        active_session_id = None
+        if self._controllers and 0 <= self._active_index < len(self._controllers):
+            active_session_id = self._controllers[self._active_index].session_id
+        kept_ids: set[str] = set()
         for entry in sessions:
             sid = str(entry.get("id", ""))
             controller = existing.get(sid)
@@ -1174,9 +1331,31 @@ class DesktopBackend(QObject):
             else:
                 controller.refresh_from_kernel()
             new_controllers.append(controller)
+            kept_ids.add(sid)
+        if active_session_id and active_session_id not in kept_ids:
+            controller = existing.get(active_session_id)
+            if controller is not None:
+                new_controllers.append(controller)
+                kept_ids.add(active_session_id)
+        for sid, controller in existing.items():
+            if sid in kept_ids:
+                continue
+            if controller.busy_state:
+                new_controllers.append(controller)
+                kept_ids.add(sid)
         self._controllers = new_controllers
         self._session_model = DesktopSessionModel(self._controllers)
-        if self._controllers:
+        if active_session_id:
+            for idx, controller in enumerate(self._controllers):
+                if controller.session_id == active_session_id:
+                    self._active_index = idx
+                    break
+            else:
+                if self._controllers:
+                    self._active_index = min(self._active_index, len(self._controllers) - 1)
+                else:
+                    self._active_index = 0
+        elif self._controllers:
             self._active_index = min(self._active_index, len(self._controllers) - 1)
         else:
             self._active_index = 0
@@ -1193,12 +1372,42 @@ class DesktopBackend(QObject):
             or query in str(session.get("id", "")).lower()
         ]
 
-    def _load_recovery_text(self) -> str:
+    def _load_recovery_texts(self) -> dict[str, str]:
         try:
             data = json.loads(self._recovery_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            return ""
-        return str(data.get("text") or "")
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        texts = data.get("draft_texts")
+        if isinstance(texts, dict):
+            return {str(key): str(value or "") for key, value in texts.items()}
+        text = str(data.get("text") or "")
+        if text:
+            return {"__legacy__": text}
+        return {}
+
+    def _migrate_legacy_draft(self) -> None:
+        legacy = self._draft_texts.pop("__legacy__", "")
+        if not legacy:
+            return
+        session_id = self._active_session_id()
+        if session_id and session_id not in self._draft_texts:
+            self._draft_texts[session_id] = legacy
+
+    def _active_session_id(self) -> str:
+        if self._controllers and 0 <= self._active_index < len(self._controllers):
+            return self._controllers[self._active_index].session_id
+        return ""
+
+    def _current_draft_text(self) -> str:
+        session_id = self._active_session_id()
+        if session_id in self._draft_texts:
+            return self._draft_texts[session_id]
+        return self._draft_texts.get("__legacy__", "")
+
+    def _sync_active_draft(self) -> None:
+        self._draft_text = self._current_draft_text()
 
     def _load_settings(self) -> dict:
         try:
@@ -1248,6 +1457,10 @@ class DesktopBackend(QObject):
         self.activeSessionChanged.emit()
         self.statusChanged.emit()
         self.modelNameChanged.emit()
+
+    def _refresh_session_rows(self) -> None:
+        self._session_model.refresh_all()
+        self.sessionsChanged.emit()
 
 
     def _attachment_path(self, path_or_url: str) -> Path | None:

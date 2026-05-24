@@ -8,10 +8,10 @@ from pathlib import Path
 from typing import Callable
 
 from chrysalis.context_engine import ContextEngine
-from chrysalis.hooks import HookContext, HookManager
+from chrysalis.hooks import DisabledHookManager, HookContext, HookManager
 from chrysalis.llm import LLMClient
 from chrysalis.observation import compact_observation
-from chrysalis.permission import PermissionEngine
+from chrysalis.permission import FullAccessPermissionEngine, PermissionEngine
 from chrysalis.tools import TOOL_PROMPT, TOOLS_SCHEMA, dumps_observation, run_tool
 from chrysalis.working import WorkingMemory
 from utils.get_prompts import get_system_prompt
@@ -32,6 +32,7 @@ class AgentLoop:
         on_stream_chunk: "Callable[[str], None] | None" = None,
         on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
         on_thinking: "Callable[[str], None] | None" = None,
+        on_working_change: "Callable[[dict], None] | None" = None,
         use_function_calling: bool = True,
         tools_schema: list[dict] | None = None,
         context_engine: ContextEngine | None = None,
@@ -45,13 +46,14 @@ class AgentLoop:
         self.on_stream_chunk = on_stream_chunk
         self.on_tool_call = on_tool_call
         self.on_thinking = on_thinking
+        self.on_working_change = on_working_change
         self.use_function_calling = use_function_calling
         self.tools_schema = tools_schema
         self.working = WorkingMemory()
         self.history_info: list[str] = history if history is not None else []
         self.context_engine = context_engine or ContextEngine()
-        self.permission_engine = permission_engine or PermissionEngine()
-        self.hooks = hooks or HookManager()
+        self.permission_engine = permission_engine or FullAccessPermissionEngine()
+        self.hooks = hooks or DisabledHookManager()
         self._cancel_event = threading.Event()
 
     def run(self, task: str, session_context: str = "") -> dict:
@@ -286,15 +288,28 @@ class AgentLoop:
     def _handle_agent_tool_side_effects(self, observation: dict) -> None:
         if not isinstance(observation, dict):
             return
+        changed_working = False
+        if observation.get("_todo"):
+            self.working.update_todos(
+                observation.get("todos") or [],
+                goal=str(observation.get("goal", "")),
+                action=str(observation.get("todo_action", "set")),
+            )
+            changed_working = True
+        self.working.tick_round()
         if observation.get("_checkpoint"):
             self.working.update_checkpoint(
                 key_info=str(observation.get("key_info", "")),
                 related_sop=str(observation.get("related_sop", "")),
             )
+            changed_working = True
         if observation.get("_long_term"):
             self.working.request_long_term_update(
                 reason=str(observation.get("reason", "")),
             )
+            changed_working = True
+        if changed_working and self.on_working_change:
+            self.on_working_change(self.working.todo_snapshot())
 
     def _execute_tool_with_guards(
         self,

@@ -137,6 +137,9 @@ class ContextEngine:
             working_prompt = working.to_prompt()
             if working_prompt:
                 sections.append(("working_memory", working_prompt, self.budget.working_chars))
+            todo_prompt = working.todo_reminder_prompt()
+            if todo_prompt:
+                sections.append(("todo_reminder", todo_prompt, min(1_200, self.budget.working_chars)))
 
         if session_context.strip():
             sections.append((

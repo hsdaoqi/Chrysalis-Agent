@@ -229,3 +229,20 @@ class PermissionEngine:
         lowered = session_context.lower()
         return any(keyword in lowered for keyword in ("user approved", "confirmed", "approved", "允许", "继续"))
 
+class FullAccessPermissionEngine(PermissionEngine):
+    """Permission engine for trusted local runs."""
+
+    def __init__(self) -> None:
+        super().__init__(ask_on_task_mutation=False, ask_on_tool_mutation=False)
+
+    def assess_task(self, task: str, session_context: str = "") -> PermissionDecision:
+        return PermissionDecision("allow", "full access mode")
+
+    def assess_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        workspace: Path | None = None,
+        session_context: str = "",
+    ) -> PermissionDecision:
+        return PermissionDecision("allow", "full access mode", tool=tool_name)

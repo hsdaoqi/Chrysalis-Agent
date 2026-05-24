@@ -14,6 +14,7 @@ from chrysalis.tui.events import (
     StreamDone,
     ToolCallStarted,
     ToolCallCompleted,
+    WorkingChange,
 )
 
 if TYPE_CHECKING:
@@ -31,10 +32,12 @@ class AgentBridge:
         self._stream_buffer = ""
         self._file_before: dict[str, str] = {}
         self._setup_callbacks()
+        self._last_working_snapshot: dict = {}
 
     def _setup_callbacks(self) -> None:
         self.kernel.loop.on_stream_chunk = self._on_stream_chunk
         self.kernel.loop.on_tool_call = self._on_tool_call
+        self.kernel.loop.on_working_change = self._on_working_change
 
     def run_task(self, task: str) -> None:
         """在后台线程中调用，阻塞直到任务完成。"""
@@ -65,6 +68,10 @@ class AgentBridge:
             self._post(ToolCallCompleted(tool, args, observation))
             self._emit_diff_if_needed(tool, args, observation)
             self._post(StatusChange("thinking"))
+
+    def _on_working_change(self, snapshot: dict) -> None:
+        self._last_working_snapshot = snapshot if isinstance(snapshot, dict) else {}
+        self._post(WorkingChange(self._last_working_snapshot))
 
     def _on_progress(self, message: str) -> None:
         pass

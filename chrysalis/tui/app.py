@@ -21,6 +21,7 @@ from chrysalis.tui.events import (
     ToolCallCompleted,
     ToolCallStarted,
     VoiceResult,
+    WorkingChange,
 )
 
 SLASH_COMMANDS = [
@@ -179,12 +180,73 @@ class TurnPanel(Static):
             detail.update(Text("(empty)", style="#585b70"))
 
 
+class TodoPanel(Static):
+    DEFAULT_CSS = """
+    TodoPanel {
+        dock: right;
+        width: 46;
+        height: 1fr;
+        background: #050505;
+        border-left: solid #2b2b3f;
+        padding: 0 1;
+    }
+    """
+
+    def __init__(self) -> None:
+        super().__init__("")
+        self._snapshot: dict = {}
+
+    def set_snapshot(self, snapshot: dict) -> None:
+        self._snapshot = snapshot if isinstance(snapshot, dict) else {}
+        self._refresh_view()
+
+    def on_mount(self) -> None:
+        self._refresh_view()
+
+    def _refresh_view(self) -> None:
+        snapshot = self._snapshot
+        todos = snapshot.get("todos") or []
+        total = int(snapshot.get("total_count", len(todos)))
+        pending = int(snapshot.get("pending_count", len([item for item in todos if item.get("status") != "completed"])))
+        rounds = int(snapshot.get("rounds_since_todo", 0))
+        interval = int(snapshot.get("todo_reminder_interval", 4))
+        goal = str(snapshot.get("goal", "")).strip()
+        active_id = str(snapshot.get("active_todo_id", ""))
+
+        lines = ["[#cdd6f4]TODO[/]", f"[#585b70]{pending}/{total} pending[/]"]
+        if goal:
+            lines.append(f"[#cdd6f4]Goal[/]  [#585b70]{goal}[/]")
+        lines.append(f"[#585b70]round {rounds}/{interval}[/]")
+
+        for item in todos[:16]:
+            title = str(item.get("title", "")).strip() or "(untitled)"
+            note = str(item.get("note", "")).strip()
+            item_id = str(item.get("id", ""))
+            status = str(item.get("status", "pending"))
+            active = item_id == active_id
+            prefix = "->" if active else "-"
+            suffix = f" [#585b70]{note}[/]" if note else ""
+            mark = "[#a6e3a1]x[/]" if status == "completed" else "[#585b70]o[/]"
+            style = "[#b4befe bold]" if active else "[#cdd6f4]"
+            lines.append(f"{mark} {style}{prefix} {title}[/]{suffix}")
+
+        if not todos:
+            lines.append("[#585b70]No TODOs yet[/]")
+
+        self.update(Text.from_markup("\n".join(lines)))
+
+
 class ChrysalisApp(App):
 
     TITLE = "Chrysalis"
     CSS = """
     Screen {
         background: #000000;
+    }
+    #todo-pane {
+        dock: right;
+        width: 34;
+        height: 1fr;
     }
     #scroll {
         height: 1fr;
@@ -263,6 +325,7 @@ class ChrysalisApp(App):
     def __init__(self) -> None:
         super().__init__()
         self.bridge = AgentBridge(self)
+        self.todo_panel = TodoPanel()
         self._streaming = False
         self._stream_widget: Static | None = None
         self._stream_buf = ""
@@ -274,6 +337,7 @@ class ChrysalisApp(App):
         self._voice_recorder = None
 
     def compose(self) -> ComposeResult:
+        yield self.todo_panel
         yield ScrollableContainer(id="scroll")
         with Vertical(id="bottom"):
             with Vertical(id="input-row"):
@@ -428,6 +492,9 @@ class ChrysalisApp(App):
 
     def on_status_change(self, event: StatusChange) -> None:
         self._update_status(event.status, event.detail)
+
+    def on_working_change(self, event: WorkingChange) -> None:
+        self.todo_panel.set_snapshot(event.snapshot)
 
     # ── Actions ──
 
