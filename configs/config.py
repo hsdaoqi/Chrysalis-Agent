@@ -38,6 +38,23 @@ class LLMConfig:
     cache_read_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_READ_PRICE", "0")))
     cache_write_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_WRITE_PRICE", "0")))
 
+    def __post_init__(self) -> None:
+        provider = self.provider.strip().lower()
+        if not self.base_url:
+            if provider == "openai":
+                self.base_url = "https://api.openai.com/v1"
+            elif provider in {"anthropic", "claude"}:
+                self.base_url = "https://api.anthropic.com/v1"
+            else:
+                self.base_url = "https://api.deepseek.com"
+        if not self.model:
+            if provider == "openai":
+                self.model = "gpt-4.1-mini"
+            elif provider in {"anthropic", "claude"}:
+                self.model = "claude-3-5-sonnet-latest"
+            else:
+                self.model = "deepseek-chat"
+
     def to_session_config(self):
         """转换为新 LLM 模块的 SessionConfig。"""
         from chrysalis.llm.types import SessionConfig
@@ -108,6 +125,10 @@ class AgentConfig:
         """
         from chrysalis.llm.types import SessionConfig
 
+        desktop_config = self._load_desktop_session_config()
+        if desktop_config is not None:
+            return [desktop_config]
+
         models_path = PROJECT_ROOT / "configs" / "llm_models.json"
         if not models_path.exists():
             return [self.llm.to_session_config()]
@@ -142,6 +163,41 @@ class AgentConfig:
                 name=entry.get("name") or model,
             ))
         return configs
+
+    def _load_desktop_session_config(self):
+        from chrysalis.llm.types import SessionConfig
+
+        settings_path = self.data_dir / "desktop_settings.json"
+        if not settings_path.exists():
+            return None
+        try:
+            data = json.loads(settings_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+        if not isinstance(data, dict) or not bool(data.get("enabled", False)):
+            return None
+        llm = data.get("llm")
+        if not isinstance(llm, dict):
+            return None
+        provider = (llm.get("provider") or "openai").strip().lower()
+        protocol = "anthropic" if provider in {"anthropic", "claude"} else "openai"
+        model = llm.get("model") or ""
+        return SessionConfig(
+            api_key=llm.get("api_key", ""),
+            base_url=llm.get("base_url", ""),
+            model=model,
+            protocol=protocol,
+            context_window=int(llm.get("context_window", 28000)),
+            temperature=float(llm.get("temperature", 0.2)),
+            max_tokens=int(llm.get("max_tokens", 4096)) if llm.get("max_tokens") else None,
+            max_retries=int(llm.get("max_retries", 4)),
+            connect_timeout=int(llm.get("connect_timeout", 5)),
+            read_timeout=int(llm.get("timeout", 60)),
+            proxy=llm.get("proxy") or None,
+            thinking=llm.get("thinking", "disabled"),
+            thinking_budget=int(llm.get("thinking_budget")) if llm.get("thinking_budget") else None,
+            name=llm.get("name") or model,
+        )
 
 
 def _expand_env_vars(obj):

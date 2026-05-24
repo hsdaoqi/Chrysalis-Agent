@@ -53,7 +53,7 @@ class FailoverSession(BaseSession):
         for s in self.sessions:
             s.history = value
 
-    def ask(self, message: dict) -> Generator[str, None, Response]:
+    def ask(self, message: dict, cancel_event=None) -> Generator[str, None, Response]:
         """轮询尝试各 session，成功则返回，全部失败则报错。"""
         start_idx = self._pick_start()
         last_error = ""
@@ -63,7 +63,7 @@ class FailoverSession(BaseSession):
             session = self.sessions[idx]
 
             session.history = self.sessions[self._current_idx].history.copy()
-            gen = session.ask(message)
+            gen = session.ask(message, cancel_event=cancel_event)
 
             chunks: list[str] = []
             response: Response | None = None
@@ -84,6 +84,9 @@ class FailoverSession(BaseSession):
             if hit_error:
                 continue
 
+            if response is not None and response.cancelled:
+                return response
+
             if response is None:
                 last_error = "!!!Error: 未收到响应"
                 continue
@@ -100,6 +103,11 @@ class FailoverSession(BaseSession):
         error_text = last_error or "!!!Error: 所有模型均不可用"
         yield error_text
         return Response(content=error_text, raw=error_text)
+
+    def cancel(self) -> None:
+        for session in self.sessions:
+            if hasattr(session, "cancel"):
+                session.cancel()
 
     def _pick_start(self) -> int:
         """

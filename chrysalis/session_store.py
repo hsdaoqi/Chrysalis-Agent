@@ -8,10 +8,8 @@ import json
 import os
 import random
 import string
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 
 def _generate_id() -> str:
@@ -31,6 +29,14 @@ def _extract_title(history: list[dict], max_len: int = 40) -> str:
                     text = text.replace("\n", " ")
                     return text[:max_len] if len(text) > max_len else text
     return "Untitled"
+
+
+def _session_sort_key(path: Path) -> tuple[int, float]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return (0, path.stat().st_mtime if path.exists() else 0)
+    return (1 if data.get("pinned") else 0, path.stat().st_mtime if path.exists() else 0)
 
 
 class SessionStore:
@@ -55,10 +61,13 @@ class SessionStore:
     def save(self, history: list[dict]) -> None:
         if not self._current_id:
             self.new_session(self._model)
+        existing = self._load_metadata(self._current_id)
 
         data = {
             "id": self._current_id,
-            "title": _extract_title(history),
+            "title": existing.get("custom_title") or _extract_title(history),
+            "custom_title": existing.get("custom_title", ""),
+            "pinned": bool(existing.get("pinned", False)),
             "created_at": self._get_created_at(),
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "model": self._model,
@@ -90,7 +99,7 @@ class SessionStore:
     def list_sessions(self, limit: int = 20) -> list[dict]:
         files = sorted(
             self.sessions_dir.glob("*.json"),
-            key=lambda f: f.stat().st_mtime,
+            key=_session_sort_key,
             reverse=True,
         )
         results = []
@@ -103,6 +112,7 @@ class SessionStore:
                     "updated_at": data.get("updated_at", ""),
                     "model": data.get("model", ""),
                     "turns": data.get("turns", 0),
+                    "pinned": bool(data.get("pinned", False)),
                 })
             except (json.JSONDecodeError, OSError):
                 continue
@@ -117,8 +127,50 @@ class SessionStore:
             return True
         return False
 
+    def rename(self, session_id: str, title: str) -> bool:
+        title = title.strip()
+        if not title:
+            return False
+        data = self._read_session_data(session_id)
+        if data is None:
+            return False
+        data["title"] = title
+        data["custom_title"] = title
+        data["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write_session_data(session_id, data)
+        return True
+
+    def set_pinned(self, session_id: str, pinned: bool) -> bool:
+        data = self._read_session_data(session_id)
+        if data is None:
+            return False
+        data["pinned"] = bool(pinned)
+        data["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        self._write_session_data(session_id, data)
+        return True
+
     def _session_path(self, session_id: str) -> Path:
         return self.sessions_dir / f"{session_id}.json"
+
+    def _read_session_data(self, session_id: str) -> dict | None:
+        path = self._session_path(session_id)
+        if not path.exists():
+            return None
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def _write_session_data(self, session_id: str, data: dict) -> None:
+        path = self._session_path(session_id)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+        os.replace(tmp_path, path)
+
+    def _load_metadata(self, session_id: str | None) -> dict:
+        if not session_id:
+            return {}
+        return self._read_session_data(session_id) or {}
 
     def _get_created_at(self) -> str:
         if not self._current_id:

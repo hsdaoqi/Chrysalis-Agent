@@ -20,10 +20,14 @@ vision = [
     "Pillow>=10.0.0",
 ]
 desktop = [
+    "PySide6>=6.7.0",
     "pywin32>=306",
     "pygetwindow>=0.0.9",
     "pyperclip>=1.8.0",
     "Pillow>=10.0.0",
+]
+build = [
+    "pyinstaller>=6.0.0",
 ]
 ocr = [
     "rapidocr-onnxruntime>=1.3.0",
@@ -37,6 +41,7 @@ voice = [
 
 [project.scripts]
 chrysalis = "chrysalis.kernel:main"
+chrysalis-desktop = "chrysalis.desktop.main:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -49,3 +54,6 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["chrysalis*", "configs*", "utils*"]
 exclude = ["assets*", "memory*", "workspace*", "data*", "tests*", "temp*", "learn-cc*"]
+
+[tool.setuptools.package-data]
+chrysalis = ["desktop/qml/*.qml"]

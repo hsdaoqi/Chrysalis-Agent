@@ -23,6 +23,45 @@ pip install -e .
 pip install -e ".[tui]"
 ```
 
+如果要使用桌面端：
+
+```bash
+pip install -e ".[desktop]"
+chrysalis-desktop
+```
+
+打包成 Windows `.exe`：
+
+```powershell
+.\scripts\build_desktop.ps1
+```
+
+默认输出：
+
+```text
+dist\Chrysalis.exe
+```
+
+如果更希望得到一个启动更快、文件夹形式的版本：
+
+```powershell
+.\scripts\build_desktop.ps1 -OneDir
+```
+
+输出：
+
+```text
+dist\Chrysalis\Chrysalis.exe
+```
+
+右键这个 `.exe` 发送到桌面快捷方式即可。
+
+也可以构建后自动创建桌面快捷方式：
+
+```powershell
+.\scripts\build_desktop.ps1 -Shortcut
+```
+
 如果要使用视觉或语音能力：
 
 ```bash

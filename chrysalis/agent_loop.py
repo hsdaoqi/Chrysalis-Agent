@@ -1,35 +1,42 @@
-"""受 GenericAgent 启发的极简观察-行动循环。"""
+"""GenericAgent 的核心行动循环。"""
+
+from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from typing import Callable
-from utils.text import brief_text
+
 from chrysalis.context_engine import ContextEngine
+from chrysalis.hooks import HookContext, HookManager
 from chrysalis.llm import LLMClient
 from chrysalis.observation import compact_observation
-from utils.get_prompts import get_system_prompt
-from utils.progress import ProgressCallback, summarize_action, summarize_observation
+from chrysalis.permission import PermissionEngine
 from chrysalis.tools import TOOL_PROMPT, TOOLS_SCHEMA, dumps_observation, run_tool
 from chrysalis.working import WorkingMemory
+from utils.get_prompts import get_system_prompt
+from utils.progress import ProgressCallback, summarize_action, summarize_observation
+from utils.text import brief_text
 
 MAX_SUMMARY_LEN = 80
 
 
 class AgentLoop:
     def __init__(
-            self,
-            llm: LLMClient,
-            workspace: Path,
-            max_turns: int = 12,
-            progress: ProgressCallback | None = None,
-            history: list[str] | None = None,
-            # 给TUI 流式输出用的
-            on_stream_chunk: "Callable[[str], None] | None" = None,
-            on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
-
-            use_function_calling: bool = True,
-            tools_schema: list[dict] | None = None,
-            context_engine: ContextEngine | None = None,
+        self,
+        llm: LLMClient,
+        workspace: Path,
+        max_turns: int = 12,
+        progress: ProgressCallback | None = None,
+        history: list[str] | None = None,
+        on_stream_chunk: "Callable[[str], None] | None" = None,
+        on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
+        on_thinking: "Callable[[str], None] | None" = None,
+        use_function_calling: bool = True,
+        tools_schema: list[dict] | None = None,
+        context_engine: ContextEngine | None = None,
+        permission_engine: PermissionEngine | None = None,
+        hooks: HookManager | None = None,
     ):
         self.llm = llm
         self.workspace = workspace
@@ -37,15 +44,35 @@ class AgentLoop:
         self.progress = progress
         self.on_stream_chunk = on_stream_chunk
         self.on_tool_call = on_tool_call
+        self.on_thinking = on_thinking
         self.use_function_calling = use_function_calling
         self.tools_schema = tools_schema
-        self.working = WorkingMemory()  # 当前任务内短期工作记忆
-        self.history_info: list[str] = history if history is not None else []  # 轻量会话摘要，用于 session anchor
+        self.working = WorkingMemory()
+        self.history_info: list[str] = history if history is not None else []
         self.context_engine = context_engine or ContextEngine()
+        self.permission_engine = permission_engine or PermissionEngine()
+        self.hooks = hooks or HookManager()
+        self._cancel_event = threading.Event()
 
     def run(self, task: str, session_context: str = "") -> dict:
+        self._cancel_event.clear()
         self.working.reset()
         self.history_info.append(f"[USER]: {brief_text(task, 400)}")
+
+        before_task = self.hooks.emit("before_task", HookContext(
+            event="before_task",
+            task=task,
+            session_context=session_context,
+            workspace=self.workspace,
+        ))
+        if before_task.stop:
+            return {"ok": False, "blocked": True, "final": before_task.message or "task stopped by hook"}
+
+        permission = self.permission_engine.assess_task(task, session_context=session_context)
+        if permission.denied:
+            return {"ok": False, "blocked": True, "final": permission.reason, "permission": permission.to_result()}
+        if permission.needs_user:
+            return permission.to_result()
 
         system_prompt = get_system_prompt(include_memory=False)
         assembled = self.context_engine.assemble(
@@ -58,31 +85,49 @@ class AgentLoop:
         )
 
         if self.use_function_calling:
-            return self._run_function_calling(task, assembled.system)
+            result = self._run_function_calling(task, assembled.system, session_context)
         else:
-            return self._run_json_in_text(task, assembled.system)
+            result = self._run_json_in_text(task, assembled.system, session_context)
 
-    # ── Native Function Calling 模式 ──
+        after_task = self.hooks.emit("after_task", HookContext(
+            event="after_task",
+            task=task,
+            session_context=session_context,
+            workspace=self.workspace,
+            result=result,
+        ))
+        if after_task.stop:
+            return {"ok": False, "blocked": True, "final": after_task.message or "task stopped by hook"}
+        return result
 
-    def _run_function_calling(self, task: str, system: str) -> dict:
+    def cancel(self) -> None:
+        self._cancel_event.set()
+        if hasattr(self.llm, "cancel"):
+            self.llm.cancel()
+
+    def _cancelled_result(self) -> dict:
+        return {"ok": False, "cancelled": True, "final": "任务已中断"}
+
+    def _run_function_calling(self, task: str, system: str, session_context: str = "") -> dict:
         tools = self.tools_schema or TOOLS_SCHEMA
-
-        # 设置 system prompt 和 tools
         self.llm.set_system(system)
         self.llm.set_tools(tools)
 
-        # 首条 user message
-        messages = [
-            {"role": "user", "content": task},
-        ]
-
+        messages = [{"role": "user", "content": task}]
         for turn in range(1, self.max_turns + 1):
+            if self._cancel_event.is_set():
+                return self._cancelled_result()
+
             response = _exhaust_generator(
-                self.llm.chat(messages, tools=tools),
+                self.llm.chat(messages, tools=tools, cancel_event=self._cancel_event),
                 self.on_stream_chunk,
             )
+            if response.cancelled or self._cancel_event.is_set():
+                return self._cancelled_result()
 
-            # 模型返回了 tool_calls
+            if response.thinking and self.on_thinking:
+                self.on_thinking(response.thinking)
+
             if response.tool_calls:
                 tc = response.tool_calls[0]
                 tool_name = tc.name
@@ -96,7 +141,16 @@ class AgentLoop:
 
                 if self.on_tool_call:
                     self.on_tool_call(tool_name, args, None)
-                observation = run_tool(tool_name, args, self.workspace)
+                if self._cancel_event.is_set():
+                    return self._cancelled_result()
+
+                observation = self._execute_tool_with_guards(
+                    task=task,
+                    tool_name=tool_name,
+                    args=args,
+                    turn=turn,
+                    session_context=session_context,
+                )
                 if self.on_tool_call:
                     self.on_tool_call(tool_name, args, observation)
 
@@ -114,7 +168,6 @@ class AgentLoop:
                         "reason": observation.get("reason", "need_user"),
                     }
 
-                # 下一轮：传 tool_result 回去
                 obs_text = dumps_observation(compact)
                 images = []
                 if isinstance(observation, dict) and observation.get("_image"):
@@ -131,21 +184,17 @@ class AgentLoop:
                 }]
                 continue
 
-            # 模型返回了文本（最终回答）
             content = response.content.strip()
             if content:
                 self._progress(summarize_action(turn, {"final": content}))
                 self.history_info.append(f"[Agent] {brief_text(content, MAX_SUMMARY_LEN)}")
                 return {"ok": True, "final": content}
 
-            # 空响应
             messages = [{"role": "user", "content": "请继续执行任务或给出最终回答。"}]
 
         return {"ok": False, "final": "达到最大轮数，仍未得到最终回答。"}
 
-    # ── JSON-in-text 模式（fallback） ──
-
-    def _run_json_in_text(self, task: str, system_prompt: str) -> dict:
+    def _run_json_in_text(self, task: str, system_prompt: str, session_context: str = "") -> dict:
         tool_prompt = TOOL_PROMPT
         messages = [
             {"role": "system", "content": system_prompt + "\n\n" + tool_prompt},
@@ -153,7 +202,13 @@ class AgentLoop:
         ]
 
         for turn in range(1, self.max_turns + 1):
-            response = _exhaust_generator(self.llm.chat(messages), self.on_stream_chunk)
+            if self._cancel_event.is_set():
+                return self._cancelled_result()
+
+            response = _exhaust_generator(self.llm.chat(messages, cancel_event=self._cancel_event), self.on_stream_chunk)
+            if response.cancelled or self._cancel_event.is_set():
+                return self._cancelled_result()
+
             raw = response.content.strip()
             action = _parse_json(raw)
             self._progress(summarize_action(turn, action or raw))
@@ -170,9 +225,19 @@ class AgentLoop:
             args = action.get("args") or {}
             if self.on_tool_call:
                 self.on_tool_call(str(tool), args, None)
-            observation = run_tool(str(tool), args, self.workspace)
+            if self._cancel_event.is_set():
+                return self._cancelled_result()
+
+            tool_name = str(tool)
+            observation = self._execute_tool_with_guards(
+                task=task,
+                tool_name=tool_name,
+                args=args,
+                turn=turn,
+                session_context=session_context,
+            )
             if self.on_tool_call:
-                self.on_tool_call(str(tool), args, observation)
+                self.on_tool_call(tool_name, args, observation)
             self._handle_agent_tool_side_effects(observation)
             compact = compact_observation(observation)
             self._progress(summarize_observation(turn, "工具", compact))
@@ -187,12 +252,9 @@ class AgentLoop:
                 }
             obs_text = "观察结果：\n" + dumps_observation(compact)
             messages.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
-            messages.append({"role": "user",
-                             "content": self._next_prompt_with_anchor(obs_text)})
+            messages.append({"role": "user", "content": self._next_prompt_with_anchor(obs_text)})
 
         return {"ok": False, "final": "达到最大轮数，仍未得到最终回答。"}
-
-    # ── History ──
 
     def _append_history_from_action(self, action: dict | None, raw: str) -> None:
         if not action:
@@ -215,40 +277,11 @@ class AgentLoop:
             max_chars=3_000,
         )
         if self.working.related_sop:
-            prompt += f"\n有不清晰的地方请再次读取 {self.working.related_sop}"
+            prompt += f"\n有不清楚的地方请再次读取 {self.working.related_sop}"
         return prompt
 
-    def _fold_earlier(self, lines: list[str]) -> str:
-        parts: list[str] = []
-        cnt = 0
-        last = ""
-
-        def flush():
-            nonlocal cnt, last
-            if cnt:
-                if "直接回答" in last:
-                    parts.append(f"[Agent]（{cnt} turns）")
-                else:
-                    parts.append(f"{last}（{cnt} turns）")
-
-        for line in lines:
-            if line.startswith("[USER]"):
-                flush()
-                parts.append(line)
-                cnt = 0
-                last = ""
-            else:
-                cnt += 1
-                last = line
-        flush()
-        return "\n".join(parts[-150:])
-
     def _next_prompt_with_anchor(self, prompt: str) -> str:
-        anchor = self._get_anchor_prompt()
-        result = prompt + anchor
-        return result
-
-    # ── Side effects ──
+        return prompt + self._get_anchor_prompt()
 
     def _handle_agent_tool_side_effects(self, observation: dict) -> None:
         if not isinstance(observation, dict):
@@ -262,6 +295,69 @@ class AgentLoop:
             self.working.request_long_term_update(
                 reason=str(observation.get("reason", "")),
             )
+
+    def _execute_tool_with_guards(
+        self,
+        task: str,
+        tool_name: str,
+        args: dict,
+        turn: int,
+        session_context: str = "",
+    ) -> dict:
+        permission = self.permission_engine.assess_tool(
+            tool_name,
+            args,
+            workspace=self.workspace,
+            session_context=session_context,
+        )
+        if permission.needs_user:
+            return permission.to_result()
+        if permission.denied:
+            return {
+                "ok": False,
+                "blocked": True,
+                "error": permission.reason,
+                "permission": permission.to_result(),
+            }
+
+        before_tool = self.hooks.emit("before_tool", HookContext(
+            event="before_tool",
+            task=task,
+            tool=tool_name,
+            args=args,
+            session_context=session_context,
+            workspace=self.workspace,
+            turn=turn,
+        ))
+        if before_tool.stop:
+            return {"ok": False, "blocked": True, "error": before_tool.message or "tool stopped by hook"}
+
+        try:
+            observation = run_tool(tool_name, args, self.workspace)
+        except Exception as exc:
+            observation = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+            self.hooks.emit("on_error", HookContext(
+                event="on_error",
+                task=task,
+                tool=tool_name,
+                args=args,
+                observation=observation,
+                session_context=session_context,
+                workspace=self.workspace,
+                turn=turn,
+            ))
+
+        self.hooks.emit("after_tool", HookContext(
+            event="after_tool",
+            task=task,
+            tool=tool_name,
+            args=args,
+            observation=observation,
+            session_context=session_context,
+            workspace=self.workspace,
+            turn=turn,
+        ))
+        return observation
 
     def _progress(self, message: str) -> None:
         if self.progress is not None:

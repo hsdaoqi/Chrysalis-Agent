@@ -7,6 +7,8 @@ import time
 
 from chrysalis.agent_loop import AgentLoop
 from chrysalis import subagent
+from chrysalis.hooks import HookManager
+from chrysalis.permission import PermissionEngine
 from chrysalis.task_queue import TaskQueue
 from configs.config import AgentConfig
 from chrysalis.llm import LLMClient, UsageTracker, create_client
@@ -40,6 +42,7 @@ class Kernel:
             config: AgentConfig | None = None,
             llm: LLMClient | None = None,
             progress: ProgressCallback | None = None,
+            session_id: str | None = None,
     ):
         self.config = config or AgentConfig()  # 全局配置，路径、模型、turn 数等
         self.progress = progress  # 进度回调，CLI/TUI 用来显示状态
@@ -55,7 +58,6 @@ class Kernel:
         )
         if llm and not llm._on_history_changed:
             llm._on_history_changed = self.session_store.save
-        self.session_store.new_session(model=self.active_model_name)
         self.pending_user_action: dict | None = None  # 记录 ask_user 等待用户操作后的续跑状态
         self.history: list[str] = []  # 轻量 session anchor 文本历史
         self.loop = AgentLoop(  # 真正执行观察-行动循环的 AgentLoop
@@ -65,6 +67,12 @@ class Kernel:
             progress=self.progress,
             history=self.history,
         )
+        self.permission_engine = self.loop.permission_engine
+        self.hooks = self.loop.hooks
+        if session_id:
+            self.load_session(session_id)
+        else:
+            self.session_store.new_session(model=self.active_model_name)
         subagent.configure(
             session_config=self.config.llm.to_session_config(),
             progress=self.progress,
@@ -98,6 +106,12 @@ class Kernel:
         result["usage"] = self.tracker.task_usage_dict()
         result["usage"]["cost"] = self.tracker.task_cost(model)
         return result
+
+    def cancel(self) -> None:
+        if hasattr(self.loop, "cancel"):
+            self.loop.cancel()
+        if hasattr(self.llm, "cancel"):
+            self.llm.cancel()
 
     @property
     def active_model_name(self) -> str:
@@ -136,11 +150,14 @@ class Kernel:
         history = self.session_store.load(session_id)
         with self.llm.session._lock:
             self.llm.session.history = history
+        self.history.clear()
+        self.pending_user_action = None
 
     def new_session(self) -> str:
         with self.llm.session._lock:
             self.llm.session.history.clear()
         self.history.clear()
+        self.pending_user_action = None
         return self.session_store.new_session(model=self.active_model_name)
 
     def list_sessions(self) -> list[dict]:

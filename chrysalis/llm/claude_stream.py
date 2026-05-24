@@ -4,6 +4,7 @@
 """
 
 import json
+import threading
 from typing import Generator
 
 import requests
@@ -17,6 +18,7 @@ def claude_stream(
     messages: list[dict],
     system: str,
     tools: list[dict] | None,
+    cancel_event: threading.Event | None = None,
 ) -> Generator[str, None, Response]:
     """发起 Anthropic messages 流式请求，yield 文本块，return Response。
 
@@ -29,7 +31,7 @@ def claude_stream(
         "Content-Type": "application/json",
     }
     payload = _build_payload(config, messages, system, tools)
-    return (yield from stream_with_retry(config, url, headers, payload, _parse_claude_sse))
+    return (yield from stream_with_retry(config, url, headers, payload, _parse_claude_sse, cancel_event=cancel_event))
 
 
 def _build_payload(
@@ -75,7 +77,10 @@ def _to_claude_tools(tools: list[dict]) -> list[dict]:
     return result
 
 
-def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, Response]:
+def _parse_claude_sse(
+    http_response: requests.Response,
+    cancel_event: threading.Event | None = None,
+) -> Generator[str, None, Response]:
     """解析 Anthropic SSE 事件流。
 
     事件格式：
@@ -95,6 +100,9 @@ def _parse_claude_sse(http_response: requests.Response) -> Generator[str, None, 
 
     event_type = ""
     for raw_line in http_response.iter_lines():
+        if cancel_event is not None and cancel_event.is_set():
+            http_response.close()
+            return Response(content="", raw="", stop_reason="cancelled", cancelled=True)
         if not raw_line:
             continue
         line = raw_line.decode("utf-8", errors="replace")

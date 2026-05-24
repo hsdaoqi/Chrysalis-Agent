@@ -8,6 +8,7 @@
 """
 
 import json
+import threading
 from typing import Callable, Generator
 
 from chrysalis.llm.logger import write_llm_log
@@ -29,6 +30,7 @@ class LLMClient:
         self._pending_tool_ids: list[str] = []
         self.tracker = tracker or UsageTracker()
         self._on_history_changed = on_history_changed
+        self._cancel_event = threading.Event()
 
     @property
     def history(self) -> list[dict]:
@@ -40,7 +42,12 @@ class LLMClient:
     def set_tools(self, tools: list[dict]) -> None:
         self.session.tools = tools
 
-    def chat(self, messages: list[dict], tools: list[dict] | None = None) -> Generator[str, None, Response]:
+    def chat(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        cancel_event: threading.Event | None = None,
+    ) -> Generator[str, None, Response]:
         """处理 agent_loop 传来的 messages，调用 LLM，流式返回。
 
         messages 格式（来自 agent_loop）：
@@ -53,6 +60,8 @@ class LLMClient:
         """
         if tools is not None:
             self.session.tools = tools
+        cancel = cancel_event or self._cancel_event
+        cancel.clear()
 
         for msg in messages:
             if msg.get("role") == "system":
@@ -61,17 +70,22 @@ class LLMClient:
         canonical_message = self._merge_user_message(messages)
         write_llm_log("Prompt", json.dumps(canonical_message, ensure_ascii=False, indent=2, default=str))
 
-        gen = self.session.ask(canonical_message)
+        gen = self.session.ask(canonical_message, cancel_event=cancel)
         response: Response | None = None
         try:
             while True:
                 chunk = next(gen)
                 yield chunk
+                if cancel.is_set():
+                    self.session.cancel()
         except StopIteration as e:
             response = e.value
 
         if response is None:
             response = Response(content="!!!Error: 未收到响应", raw="")
+
+        if response.cancelled:
+            return response
 
         self.tracker.record_turn(response.usage)
 
@@ -86,6 +100,10 @@ class LLMClient:
             self._on_history_changed(self.session.history)
 
         return response
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+        self.session.cancel()
 
     def _merge_user_message(self, messages: list[dict]) -> dict:
         """将 agent_loop 风格 messages 合并为一条 canonical user message。

@@ -4,6 +4,7 @@
 """
 
 import json
+import threading
 import time
 from typing import Generator
 
@@ -19,6 +20,7 @@ def openai_stream(
     messages: list[dict],
     system: str,
     tools: list[dict] | None,
+    cancel_event: threading.Event | None = None,
 ) -> Generator[str, None, Response]:
     """发起 OpenAI chat/completions 流式请求，yield 文本块，return Response。
 
@@ -31,7 +33,7 @@ def openai_stream(
         "Content-Type": "application/json",
     }
     payload = _build_payload(config, messages, tools)
-    return (yield from stream_with_retry(config, url, headers, payload, _parse_openai_sse))
+    return (yield from stream_with_retry(config, url, headers, payload, _parse_openai_sse, cancel_event=cancel_event))
 
 
 def _build_payload(
@@ -54,7 +56,10 @@ def _build_payload(
     return payload
 
 
-def _parse_openai_sse(http_response: requests.Response) -> Generator[str, None, Response]:
+def _parse_openai_sse(
+    http_response: requests.Response,
+    cancel_event: threading.Event | None = None,
+) -> Generator[str, None, Response]:
     """解析 OpenAI SSE 流，提取 content delta 和 tool_calls。"""
     content_parts: list[str] = []
     tool_calls_map: dict[int, dict] = {}
@@ -62,6 +67,9 @@ def _parse_openai_sse(http_response: requests.Response) -> Generator[str, None, 
     usage = Usage()
 
     for raw_line in http_response.iter_lines():
+        if cancel_event is not None and cancel_event.is_set():
+            http_response.close()
+            return Response(content="", raw="", stop_reason="cancelled", cancelled=True)
         if not raw_line:
             continue
         line = raw_line.decode("utf-8", errors="replace")
@@ -129,11 +137,14 @@ def stream_with_retry(
     headers: dict,
     payload: dict,
     parse_fn,
+    cancel_event: threading.Event | None = None,
 ) -> Generator[str, None, Response]:
     """带指数退避重试的流式 HTTP 请求。"""
     proxies = {"http": config.proxy, "https": config.proxy} if config.proxy else None
 
     for attempt in range(config.max_retries + 1):
+        if cancel_event is not None and cancel_event.is_set():
+            return Response(content="", raw="", stop_reason="cancelled", cancelled=True)
         try:
             resp = requests.post(
                 url,
@@ -143,6 +154,15 @@ def stream_with_retry(
                 timeout=(config.connect_timeout, config.read_timeout),
                 proxies=proxies,
             )
+            if cancel_event is not None:
+                def _watch_cancel() -> None:
+                    cancel_event.wait()
+                    try:
+                        resp.close()
+                    except Exception:
+                        pass
+
+                threading.Thread(target=_watch_cancel, daemon=True).start()
             if resp.status_code >= 400:
                 body = ""
                 try:
@@ -157,9 +177,11 @@ def stream_with_retry(
                 return Response(content=error_text, raw=error_text)
 
             resp.encoding = "utf-8"
-            return (yield from parse_fn(resp))
+            return (yield from parse_fn(resp, cancel_event=cancel_event))
 
         except (requests.Timeout, requests.ConnectionError) as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                return Response(content="", raw="", stop_reason="cancelled", cancelled=True)
             if attempt < config.max_retries:
                 time.sleep(_backoff_delay(attempt))
                 continue
@@ -168,6 +190,8 @@ def stream_with_retry(
             return Response(content=error_text, raw=error_text)
 
         except Exception as exc:
+            if cancel_event is not None and cancel_event.is_set():
+                return Response(content="", raw="", stop_reason="cancelled", cancelled=True)
             error_text = f"!!!Error: {type(exc).__name__}: {exc}"
             yield error_text
             return Response(content=error_text, raw=error_text)

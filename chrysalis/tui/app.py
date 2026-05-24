@@ -254,7 +254,7 @@ class ChrysalisApp(App):
     """
 
     BINDINGS = [
-        Binding("ctrl+c", "quit", show=False),
+        Binding("ctrl+c", "interrupt_or_quit", show=False),
         Binding("ctrl+l", "clear_screen", show=False),
         Binding("ctrl+g", "jump_to_message", show=False),
         Binding("ctrl+r", "toggle_recording", show=False),
@@ -283,7 +283,7 @@ class ChrysalisApp(App):
 
     def on_mount(self) -> None:
         self._out("[#b4befe bold]Chrysalis[/] [#585b70]v0.1 · autonomous agent[/]")
-        self._out("[#585b70]Type a task, or press Ctrl+C to exit.[/]")
+        self._out("[#585b70]Type a task, Ctrl+K to interrupt, or press Ctrl+C to exit.[/]")
         self._out("")
         self._update_status("ready")
         self.query_one("#input", Input).focus()
@@ -434,6 +434,16 @@ class ChrysalisApp(App):
     def action_clear_screen(self) -> None:
         self.query_one("#scroll", ScrollableContainer).remove_children()
         self._user_messages.clear()
+
+    def action_interrupt_or_quit(self) -> None:
+        if self._is_busy():
+            self.bridge.cancel_task()
+            self._update_status("interrupting")
+            return
+        self.action_quit()
+
+    def _is_busy(self) -> bool:
+        return self._streaming or self._current_panel is not None
 
     def action_jump_to_message(self) -> None:
         if not self._user_messages:
@@ -690,18 +700,20 @@ class ChrysalisApp(App):
         if status == "ready":
             s = f"[#585b70]{model}[/]"
         elif status == "thinking":
-            s = f"[#b4befe]⟳[/] [#585b70]{model} · thinking[/]"
+            s = f"[#b4befe]?[/] [#585b70]{model} ? thinking[/]"
         elif status == "executing":
-            tool = f" · {detail}" if detail else ""
-            s = f"[#89b4fa]⟳[/] [#585b70]{model}{tool}[/]"
+            tool = f" ? {detail}" if detail else ""
+            s = f"[#89b4fa]?[/] [#585b70]{model}{tool}[/]"
+        elif status == "interrupting":
+            s = f"[#f38ba8]?[/] [#585b70]{model} ? interrupting[/]"
         elif status == "recording":
-            s = f"[#f38ba8]●[/] [#585b70]recording... (Ctrl+R to stop)[/]"
+            s = f"[#f38ba8]?[/] [#585b70]recording... (Ctrl+R to stop)[/]"
         elif status == "transcribing":
-            s = f"[#a6e3a1]⟳[/] [#585b70]transcribing...[/]"
+            s = f"[#a6e3a1]?[/] [#585b70]transcribing...[/]"
         else:
-            s = f"[#585b70]{model} · {status}[/]"
+            s = f"[#585b70]{model} ? {status}[/]"
         if self._turn:
-            s += f" [#585b70]· turn {self._turn}[/]"
+            s += f" [#585b70]? turn {self._turn}[/]"
         self.query_one("#status", Static).update(s)
 
     def _fmt_args(self, args: dict) -> str:

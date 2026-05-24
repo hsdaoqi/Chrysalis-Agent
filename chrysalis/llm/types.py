@@ -18,6 +18,10 @@ History 内部统一使用 canonical block 格式，与具体协议解耦：
 from dataclasses import dataclass, field
 
 
+class CancelledError(Exception):
+    """Raised when an in-flight LLM request is cancelled cooperatively."""
+
+
 @dataclass
 class SessionConfig:
     api_key: str
@@ -125,6 +129,7 @@ class Response:
     raw: str = ""
     stop_reason: str = "end_turn"
     usage: Usage = field(default_factory=Usage)
+    cancelled: bool = False
 
     @property
     def is_error(self) -> bool:

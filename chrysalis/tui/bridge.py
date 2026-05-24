@@ -48,6 +48,9 @@ class AgentBridge:
         self._post(AgentDone(result))
         self._post(StatusChange("idle"))
 
+    def cancel_task(self) -> None:
+        self.kernel.cancel()
+
     def _on_stream_chunk(self, chunk: str) -> None:
         self._stream_buffer += chunk
         self._post(StreamChunk(chunk))
