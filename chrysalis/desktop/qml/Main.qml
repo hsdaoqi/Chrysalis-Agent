@@ -328,6 +328,7 @@ ApplicationWindow {
         property int preferredHeight: multiline ? 188 : 78
 
         spacing: 4
+        implicitHeight: root.preferredHeight
 
         function syncValue() {
             if (root.multiline) {
@@ -1197,12 +1198,14 @@ ApplicationWindow {
 
                                             Rectangle {
                                                 Layout.fillWidth: true
+                                                Layout.preferredHeight: 156
                                                 radius: 6
                                                 color: theme.panel
                                                 border.color: theme.line
                                                 border.width: 1
 
                                                 ColumnLayout {
+                                                    id: profileSection
                                                     anchors.fill: parent
                                                     anchors.margins: 16
                                                     spacing: 10
@@ -1262,12 +1265,14 @@ ApplicationWindow {
 
                                             Rectangle {
                                                 Layout.fillWidth: true
+                                                Layout.preferredHeight: 198
                                                 radius: 6
                                                 color: theme.panel
                                                 border.color: theme.line
                                                 border.width: 1
 
                                                 ColumnLayout {
+                                                    id: connectionSection
                                                     anchors.fill: parent
                                                     anchors.margins: 16
                                                     spacing: 10
@@ -1331,12 +1336,14 @@ ApplicationWindow {
 
                                             Rectangle {
                                                 Layout.fillWidth: true
+                                                Layout.preferredHeight: 278
                                                 radius: 6
                                                 color: theme.panel
                                                 border.color: theme.line
                                                 border.width: 1
 
                                                 ColumnLayout {
+                                                    id: behaviorSection
                                                     anchors.fill: parent
                                                     anchors.margins: 16
                                                     spacing: 10
@@ -1434,12 +1441,14 @@ ApplicationWindow {
 
                                             Rectangle {
                                                 Layout.fillWidth: true
+                                                Layout.preferredHeight: 292
                                                 radius: 6
                                                 color: theme.panel
                                                 border.color: theme.line
                                                 border.width: 1
 
                                                 ColumnLayout {
+                                                    id: promptSection
                                                     anchors.fill: parent
                                                     anchors.margins: 16
                                                     spacing: 10
