@@ -23,6 +23,22 @@ from chrysalis.llm.usage import _fmt_elapsed
 _FILE_MODIFY_TOOLS = {"file_write", "file_patch"}
 _MAX_ATTACHMENTS = 8
 _ATTACHMENT_PREVIEW_CHARS = 8_000
+_WORKSPACE_PREVIEW_CHARS = 16_000
+_WORKSPACE_RECENT_LIMIT = 12
+_IGNORED_WORKSPACE_DIRS = {
+    ".git",
+    ".idea",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".tox",
+    "__pycache__",
+    "build",
+    "dist",
+    "node_modules",
+    ".venv",
+    "venv",
+}
 _DESKTOP_SETTINGS_PATH = Path("data/desktop_settings.json")
 _TEXT_EXTENSIONS = {
     ".bat", ".c", ".cfg", ".cpp", ".cs", ".css", ".csv", ".diff", ".env",
@@ -61,6 +77,30 @@ class TurnAnchor:
     title: str
     summary: str
     status: str
+
+
+@dataclass
+class WorkspaceNode:
+    path: Path
+    name: str
+    depth: int
+    is_dir: bool
+    has_children: bool
+    expanded: bool = False
+    children: list["WorkspaceNode"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class WorkspaceEntry:
+    path: str
+    name: str
+    depth: int
+    is_dir: bool
+    has_children: bool
+    expanded: bool
+    selected: bool
+    kind: str
+    summary: str
 
 
 class MessageListModel(QAbstractListModel):
@@ -289,6 +329,368 @@ class TurnListModel(QAbstractListModel):
         self.endResetModel()
 
 
+class WorkspaceTreeModel(QAbstractListModel):
+    NameRole = Qt.UserRole + 1
+    PathRole = Qt.UserRole + 2
+    DepthRole = Qt.UserRole + 3
+    IsDirRole = Qt.UserRole + 4
+    HasChildrenRole = Qt.UserRole + 5
+    ExpandedRole = Qt.UserRole + 6
+    SelectedRole = Qt.UserRole + 7
+    KindRole = Qt.UserRole + 8
+    SummaryRole = Qt.UserRole + 9
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._root: Path | None = None
+        self._selected_key = ""
+        self._expanded_keys: set[str] = set()
+        self._node_index: dict[str, WorkspaceNode] = {}
+        self._visible_entries: list[WorkspaceEntry] = []
+
+    def roleNames(self) -> dict[int, bytes]:
+        return {
+            self.NameRole: b"name",
+            self.PathRole: b"path",
+            self.DepthRole: b"depth",
+            self.IsDirRole: b"isDir",
+            self.HasChildrenRole: b"hasChildren",
+            self.ExpandedRole: b"expanded",
+            self.SelectedRole: b"selected",
+            self.KindRole: b"kind",
+            self.SummaryRole: b"summary",
+        }
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        if parent.isValid():
+            return 0
+        return len(self._visible_entries)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        if row < 0 or row >= len(self._visible_entries):
+            return None
+        entry = self._visible_entries[row]
+        if role == self.NameRole:
+            return entry.name
+        if role == self.PathRole:
+            return entry.path
+        if role == self.DepthRole:
+            return entry.depth
+        if role == self.IsDirRole:
+            return entry.is_dir
+        if role == self.HasChildrenRole:
+            return entry.has_children
+        if role == self.ExpandedRole:
+            return entry.expanded
+        if role == self.SelectedRole:
+            return entry.selected
+        if role == self.KindRole:
+            return entry.kind
+        if role == self.SummaryRole:
+            return entry.summary
+        return None
+
+    def refresh(self, root: Path, selected_path: str = "") -> None:
+        self.beginResetModel()
+        self._root = root
+        self._selected_key = _path_key(selected_path) if selected_path else ""
+        auto_expanded = self._ancestor_keys(self._selected_key)
+        self._expanded_keys |= auto_expanded
+        self._node_index = {}
+        root_node = self._scan_directory(root, depth=-1)
+        if root_node is None:
+            self._visible_entries = []
+            self.endResetModel()
+            return
+        self._visible_entries = self._flatten(root_node)
+        self.endResetModel()
+
+    def toggle_path(self, path: str) -> bool:
+        key = _path_key(path)
+        node = self._node_index.get(key)
+        if node is None or not node.is_dir:
+            return False
+        if key in self._expanded_keys:
+            self._expanded_keys.remove(key)
+        else:
+            self._expanded_keys.add(key)
+        if self._root is None:
+            return False
+        self.refresh(self._root, selected_path=self._selected_key or path)
+        return True
+
+    def select_path(self, path: str) -> bool:
+        key = _path_key(path)
+        if key == self._selected_key:
+            return True
+        if self._root is None:
+            return False
+        if key not in self._node_index:
+            return False
+        self.refresh(self._root, selected_path=path)
+        return True
+
+    def selected_path(self) -> str:
+        for entry in self._visible_entries:
+            if entry.selected:
+                return entry.path
+        return ""
+
+    def _scan_directory(self, path: Path, depth: int) -> WorkspaceNode | None:
+        if not path.exists() or not path.is_dir():
+            return None
+        node = WorkspaceNode(
+            path=path,
+            name=_workspace_label(path, depth),
+            depth=depth,
+            is_dir=True,
+            has_children=False,
+            expanded=True if depth < 0 else _path_key(path) in self._expanded_keys,
+        )
+        self._node_index[_path_key(path)] = node
+        children: list[WorkspaceNode] = []
+        try:
+            entries = sorted(
+                path.iterdir(),
+                key=lambda item: (not item.is_dir(), item.name.lower()),
+            )
+        except OSError:
+            entries = []
+        for child in entries:
+            if child.is_dir() and child.name in _IGNORED_WORKSPACE_DIRS:
+                continue
+            child_node = self._scan_child(child, depth + 1)
+            if child_node is not None:
+                children.append(child_node)
+        node.children = children
+        node.has_children = bool(children)
+        return node
+
+    def _scan_child(self, path: Path, depth: int) -> WorkspaceNode | None:
+        key = _path_key(path)
+        if path.is_dir():
+            node = WorkspaceNode(
+                path=path,
+                name=path.name,
+                depth=depth,
+                is_dir=True,
+                has_children=False,
+                expanded=key in self._expanded_keys,
+            )
+            self._node_index[key] = node
+            children: list[WorkspaceNode] = []
+            try:
+                entries = sorted(
+                    path.iterdir(),
+                    key=lambda item: (not item.is_dir(), item.name.lower()),
+                )
+            except OSError:
+                entries = []
+            for child in entries:
+                if child.is_dir() and child.name in _IGNORED_WORKSPACE_DIRS:
+                    continue
+                child_node = self._scan_child(child, depth + 1)
+                if child_node is not None:
+                    children.append(child_node)
+            node.children = children
+            node.has_children = bool(children)
+            return node
+
+        if not path.exists():
+            return None
+        kind = _workspace_kind(path)
+        summary = _workspace_summary(path, kind)
+        node = WorkspaceNode(
+            path=path,
+            name=path.name,
+            depth=depth,
+            is_dir=False,
+            has_children=False,
+        )
+        self._node_index[key] = node
+        return node
+
+    def _flatten(self, root: WorkspaceNode) -> list[WorkspaceEntry]:
+        entries: list[WorkspaceEntry] = []
+
+        def visit(node: WorkspaceNode) -> None:
+            if node.depth >= 0:
+                key = _path_key(node.path)
+                entries.append(
+                    WorkspaceEntry(
+                        path=str(node.path),
+                        name=node.name,
+                        depth=max(node.depth, 0),
+                        is_dir=node.is_dir,
+                        has_children=node.has_children,
+                        expanded=bool(node.is_dir and key in self._expanded_keys),
+                        selected=key == self._selected_key,
+                        kind=_workspace_kind(node.path),
+                        summary=_workspace_summary(node.path, _workspace_kind(node.path)),
+                    )
+                )
+            if node.is_dir and (node.depth < 0 or _path_key(node.path) in self._expanded_keys):
+                for child in node.children:
+                    visit(child)
+
+        visit(root)
+        return entries
+
+    def _ancestor_keys(self, key: str) -> set[str]:
+        if not key or self._root is None:
+            return set()
+        selected = Path(key)
+        root_key = _path_key(self._root)
+        if root_key not in { _path_key(parent) for parent in selected.parents } and _path_key(selected) != root_key:
+            return set()
+        ancestors: set[str] = set()
+        for parent in selected.parents:
+            parent_key = _path_key(parent)
+            ancestors.add(parent_key)
+            if parent_key == root_key:
+                break
+        return ancestors
+
+
+class WorkspaceChangeModel(QAbstractListModel):
+    NameRole = Qt.UserRole + 1
+    PathRole = Qt.UserRole + 2
+    KindRole = Qt.UserRole + 3
+    SummaryRole = Qt.UserRole + 4
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._items: list[WorkspaceEntry] = []
+
+    def roleNames(self) -> dict[int, bytes]:
+        return {
+            self.NameRole: b"name",
+            self.PathRole: b"path",
+            self.KindRole: b"kind",
+            self.SummaryRole: b"summary",
+        }
+
+    def rowCount(self, parent: QModelIndex = QModelIndex()) -> int:  # noqa: N802
+        if parent.isValid():
+            return 0
+        return len(self._items)
+
+    def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row = index.row()
+        if row < 0 or row >= len(self._items):
+            return None
+        item = self._items[row]
+        if role == self.NameRole:
+            return item.name
+        if role == self.PathRole:
+            return item.path
+        if role == self.KindRole:
+            return item.kind
+        if role == self.SummaryRole:
+            return item.summary
+        return None
+
+    def clear(self) -> None:
+        if not self._items:
+            return
+        self.beginResetModel()
+        self._items.clear()
+        self.endResetModel()
+
+    def push(self, item: WorkspaceEntry) -> None:
+        for idx, existing in enumerate(self._items):
+            if existing.path == item.path:
+                self.beginRemoveRows(QModelIndex(), idx, idx)
+                del self._items[idx]
+                self.endRemoveRows()
+                break
+        self.beginInsertRows(QModelIndex(), 0, 0)
+        self._items.insert(0, item)
+        self.endInsertRows()
+        if len(self._items) > _WORKSPACE_RECENT_LIMIT:
+            self.beginRemoveRows(QModelIndex(), _WORKSPACE_RECENT_LIMIT, len(self._items) - 1)
+            del self._items[_WORKSPACE_RECENT_LIMIT:]
+            self.endRemoveRows()
+
+
+def _path_key(path: str | Path) -> str:
+    try:
+        return str(Path(path).expanduser().resolve())
+    except OSError:
+        return str(Path(path).expanduser())
+
+
+def _workspace_label(path: Path, depth: int) -> str:
+    if depth < 0:
+        return path.name or str(path)
+    return path.name or str(path)
+
+
+def _workspace_kind(path: Path) -> str:
+    if path.is_dir():
+        return "folder"
+    suffix = path.suffix.lower()
+    if suffix in _IMAGE_EXTENSIONS:
+        return "image"
+    if suffix in _TEXT_EXTENSIONS:
+        return "text"
+    mime, _ = mimetypes.guess_type(str(path))
+    if mime:
+        if mime.startswith("image/"):
+            return "image"
+        if mime.startswith("text/") or mime in {"application/json", "application/xml"}:
+            return "text"
+    return "file"
+
+
+def _workspace_summary(path: Path, kind: str) -> str:
+    if path.is_dir():
+        try:
+            count = sum(1 for _ in path.iterdir())
+        except OSError:
+            count = 0
+        return f"{count} items"
+    try:
+        size = path.stat().st_size
+    except OSError:
+        size = 0
+    if kind == "text":
+        return f"text, {_fmt_bytes(size)}"
+    if kind == "image":
+        return f"image, {_fmt_bytes(size)}"
+    return f"file, {_fmt_bytes(size)}"
+
+
+def _workspace_preview_text(path: Path) -> str:
+    if not path.exists() or path.is_dir():
+        return ""
+    if _workspace_kind(path) == "image":
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    if len(text) <= _WORKSPACE_PREVIEW_CHARS:
+        return text.strip()
+    return text[:_WORKSPACE_PREVIEW_CHARS].rstrip() + "\n...[preview truncated]"
+
+
+def _fmt_bytes(size: int) -> str:
+    value = float(max(0, size))
+    for unit in ("B", "KB", "MB", "GB"):
+        if value < 1024 or unit == "GB":
+            if unit == "B":
+                return f"{int(value)} {unit}"
+            return f"{value:.1f} {unit}"
+        value /= 1024
+    return f"{size} B"
+
+
 class SessionController(QObject):
     statusChanged = Signal()
     messagesChanged = Signal()
@@ -297,6 +699,7 @@ class SessionController(QObject):
     busyChanged = Signal()
     titleChanged = Signal()
     modelNameChanged = Signal()
+    fileChanged = Signal(str)
 
     def __init__(self, kernel: Kernel, session_id: str) -> None:
         super().__init__()
@@ -470,6 +873,7 @@ class SessionController(QObject):
             elif kind == "file_diff":
                 path, before, after = payload  # type: ignore[misc]
                 self._append_diff(str(path), str(before), str(after))
+                self.fileChanged.emit(str(path))
                 changed_messages = True
             elif kind == "thinking":
                 self._append_thinking(str(payload))
@@ -943,6 +1347,7 @@ class DesktopBackend(QObject):
     recoveryChanged = Signal()
     attachmentsChanged = Signal()
     settingsChanged = Signal()
+    workspaceChanged = Signal()
 
     def __init__(self) -> None:
         super().__init__()
@@ -953,12 +1358,25 @@ class DesktopBackend(QObject):
         self._session_filter = ""
         self._session_model = DesktopSessionModel(self._controllers)
         self._attachment_model = AttachmentListModel()
+        self._workspace_model = WorkspaceTreeModel()
+        self._workspace_changes_model = WorkspaceChangeModel()
+        self._workspace_selected_path = ""
+        self._workspace_preview = {
+            "path": "",
+            "name": "",
+            "kind": "",
+            "summary": "Select a file to preview.",
+            "content": "",
+            "image_url": "",
+            "can_preview": False,
+        }
         self._recovery_path = self.config.data_dir / "desktop_recovery.json"
         self._settings_path = self.config.data_dir / "desktop_settings.json"
         self._settings = self._load_settings()
         self._draft_texts = self._load_recovery_texts()
         self._draft_text = ""
         self._shutting_down = False
+        self._refresh_workspace_state()
         self._load_sessions()
         self._migrate_legacy_draft()
         self._sync_active_draft()
@@ -1012,6 +1430,22 @@ class DesktopBackend(QObject):
     @Property(str, notify=settingsChanged)
     def system_prompt_text(self) -> str:
         return str(self._settings.get("system_prompt") or "")
+
+    @Property(QObject, notify=workspaceChanged)
+    def workspace_model_object(self) -> WorkspaceTreeModel:
+        return self._workspace_model
+
+    @Property(QObject, notify=workspaceChanged)
+    def workspace_changes_model_object(self) -> WorkspaceChangeModel:
+        return self._workspace_changes_model
+
+    @Property(str, notify=workspaceChanged)
+    def workspace_root_text(self) -> str:
+        return str(self.config.workspace_dir)
+
+    @Property("QVariantMap", notify=workspaceChanged)
+    def workspace_preview(self) -> dict:
+        return dict(self._workspace_preview)
 
     @Slot()
     def refresh_sessions(self) -> None:
@@ -1119,6 +1553,38 @@ class DesktopBackend(QObject):
     def clear_attachments(self) -> None:
         if self._attachment_model.clear():
             self.attachmentsChanged.emit()
+
+    @Slot()
+    def refresh_workspace(self) -> None:
+        self._refresh_workspace_state()
+
+    @Slot(str)
+    def toggle_workspace_path(self, path: str) -> None:
+        if self._workspace_model.toggle_path(path):
+            self.workspaceChanged.emit()
+
+    @Slot(str, result=bool)
+    def select_workspace_path(self, path: str) -> bool:
+        target = self._workspace_path(path)
+        if target is None:
+            return False
+        if target.is_dir():
+            changed = self._workspace_model.toggle_path(str(target))
+            if changed:
+                self.workspaceChanged.emit()
+            return changed
+        self._workspace_selected_path = str(target)
+        self._refresh_workspace_preview(target)
+        self._workspace_model.select_path(str(target))
+        self.workspaceChanged.emit()
+        return True
+
+    @Slot(str, result=bool)
+    def attach_workspace_path(self, path: str) -> bool:
+        target = self._workspace_path(path)
+        if target is None or not target.is_file():
+            return False
+        return self.add_attachment(str(target))
 
     @Slot()
     def shutdown(self) -> None:
@@ -1295,6 +1761,7 @@ class DesktopBackend(QObject):
         controller.busyChanged.connect(self._refresh_session_rows)
         controller.titleChanged.connect(self.sessionsChanged.emit)
         controller.modelNameChanged.connect(self.modelNameChanged.emit)
+        controller.fileChanged.connect(self._remember_workspace_change)
         return controller
 
     def _create_controller(self, session_id: str) -> SessionController:
@@ -1307,6 +1774,7 @@ class DesktopBackend(QObject):
         controller.busyChanged.connect(self._refresh_session_rows)
         controller.titleChanged.connect(self.sessionsChanged.emit)
         controller.modelNameChanged.connect(self.modelNameChanged.emit)
+        controller.fileChanged.connect(self._remember_workspace_change)
         return controller
 
     def _find_controller(self, session_id: str) -> SessionController | None:
@@ -1451,16 +1919,128 @@ class DesktopBackend(QObject):
         self.config = AgentConfig()
         self._session_store = SessionStore(self.config.data_dir / "sessions")
         self._session_model = DesktopSessionModel(self._controllers)
+        self._workspace_selected_path = ""
+        self._workspace_changes_model.clear()
+        self._refresh_workspace_state(emit=False)
         for controller in self._controllers:
             controller.apply_config(self.config)
         self.sessionsChanged.emit()
         self.activeSessionChanged.emit()
         self.statusChanged.emit()
         self.modelNameChanged.emit()
+        self.workspaceChanged.emit()
 
     def _refresh_session_rows(self) -> None:
         self._session_model.refresh_all()
         self.sessionsChanged.emit()
+
+    def _refresh_workspace_state(self, emit: bool = True) -> None:
+        root = self.config.workspace_dir
+        root.mkdir(parents=True, exist_ok=True)
+        selected = self._workspace_selected_path
+        if selected:
+            target = self._workspace_path(selected)
+            if target is None:
+                selected = ""
+                self._workspace_selected_path = ""
+            else:
+                selected = str(target)
+                self._workspace_selected_path = selected
+        self._workspace_model.refresh(root, selected)
+        if selected:
+            self._refresh_workspace_preview(Path(selected))
+        else:
+            self._workspace_preview = {
+                "path": "",
+                "name": "",
+                "kind": "",
+                "summary": "Select a file to preview.",
+                "content": "",
+                "image_url": "",
+                "can_preview": False,
+            }
+        if emit:
+            self.workspaceChanged.emit()
+
+    def _refresh_workspace_preview(self, target: Path) -> None:
+        kind = _workspace_kind(target)
+        summary = _workspace_summary(target, kind) if target.exists() else "missing"
+        image_url = ""
+        content = ""
+        can_preview = False
+        if target.is_dir():
+            try:
+                entries = sorted(item.name for item in target.iterdir())[:80]
+            except OSError:
+                entries = []
+            content = "\n".join(entries) if entries else "(empty folder)"
+            can_preview = True
+        elif kind == "text":
+            content = _workspace_preview_text(target)
+            can_preview = bool(content)
+        elif kind == "image":
+            image_url = QUrl.fromLocalFile(str(target)).toString()
+            content = "Image preview"
+            can_preview = True
+        else:
+            content = "No inline preview for this file type."
+
+        self._workspace_preview = {
+            "path": str(target),
+            "name": target.name or str(target),
+            "kind": kind,
+            "summary": summary,
+            "content": content,
+            "image_url": image_url,
+            "can_preview": can_preview,
+        }
+
+    def _remember_workspace_change(self, path: str) -> None:
+        target = self._workspace_path(path)
+        if target is None:
+            return
+        kind = _workspace_kind(target)
+        entry = WorkspaceEntry(
+            path=str(target),
+            name=target.name or str(target),
+            depth=0,
+            is_dir=target.is_dir(),
+            has_children=False,
+            expanded=False,
+            selected=False,
+            kind=kind,
+            summary=_workspace_summary(target, kind),
+        )
+        self._workspace_changes_model.push(entry)
+        if not self._workspace_selected_path:
+            self._workspace_selected_path = str(target)
+            self._refresh_workspace_preview(target)
+        self._refresh_workspace_state()
+
+    def _workspace_path(self, path_or_url: str) -> Path | None:
+        raw = str(path_or_url or "").strip()
+        if raw.startswith("Diff:"):
+            raw = raw[5:].strip()
+        if not raw:
+            return None
+        url = QUrl(raw)
+        if url.isValid() and url.isLocalFile():
+            raw = url.toLocalFile()
+        elif raw.startswith("file:///"):
+            raw = raw[8:]
+        root = self.config.workspace_dir.resolve()
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            candidate = candidate.resolve()
+        except OSError:
+            candidate = candidate.absolute()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        return candidate
 
 
     def _attachment_path(self, path_or_url: str) -> Path | None:

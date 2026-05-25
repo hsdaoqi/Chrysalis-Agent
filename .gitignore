@@ -44,3 +44,7 @@ workspace/browser_profile/
 # 日志
 *.log
 logs/
+
+#可变文件
+global_mem.txt
+global_mem_insight.txt

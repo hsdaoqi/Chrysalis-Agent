@@ -1,0 +1,10 @@
+# Chrysalis 全局事实
+
+# 已验证环境事实
+- 你要读各种sop文件都是以.md结尾的文件
+
+
+# LLM 配置
+- 多模型配置文件: configs/llm_models.json（JSON数组，按顺序加载）
+- 配置加载逻辑: configs/config.py → load_session_configs() 读取 llm_models.json，支持 ${ENV_VAR} 展开
+

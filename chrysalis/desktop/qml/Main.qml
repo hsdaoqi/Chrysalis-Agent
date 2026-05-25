@@ -15,6 +15,7 @@ ApplicationWindow {
     color: theme.bg
     property string renameSessionId: ""
     property string activePage: "chat"
+    property string sidePage: "sessions"
 
     onVisibilityChanged: {
         if (window.visibility === Window.Minimized) {
@@ -149,6 +150,12 @@ ApplicationWindow {
         openSettingsPage()
     }
 
+    function openWorkspacePath(path) {
+        if (backend && backend.select_workspace_path(path)) {
+            sidePage = "workspace"
+        }
+    }
+
     Shortcut {
         sequence: "Ctrl+C"
         context: Qt.ApplicationShortcut
@@ -262,6 +269,120 @@ ApplicationWindow {
                 color: theme.muted
                 font.family: theme.mono
                 font.pixelSize: 9
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: area
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.clicked()
+        }
+    }
+
+    component WorkspaceFileRow: Rectangle {
+        id: root
+        property string name: ""
+        property string path: ""
+        property int depth: 0
+        property bool isDir: false
+        property bool hasChildren: false
+        property bool expanded: false
+        property bool selected: false
+        property string kind: ""
+        property string summary: ""
+        signal clicked()
+
+        height: 30
+        radius: 4
+        color: selected ? theme.panelHover : (area.containsMouse ? "#14141d" : "transparent")
+        border.color: selected ? theme.purple : "transparent"
+        border.width: 1
+
+        RowLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 8 + root.depth * 14
+            anchors.rightMargin: 8
+            spacing: 6
+
+            Text {
+                Layout.preferredWidth: 14
+                text: root.isDir ? (root.expanded ? "v" : ">") : ""
+                color: root.hasChildren ? theme.purple : theme.faint
+                font.family: theme.mono
+                font.pixelSize: 11
+                horizontalAlignment: Text.AlignHCenter
+            }
+
+            Text {
+                text: root.isDir ? "dir" : root.kind
+                color: root.isDir ? theme.blue : (root.kind === "image" ? theme.green : theme.muted)
+                font.family: theme.mono
+                font.pixelSize: 10
+                Layout.preferredWidth: 34
+                elide: Text.ElideRight
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: root.name
+                color: root.selected ? theme.text : (root.isDir ? theme.text : theme.muted)
+                font.family: theme.mono
+                font.pixelSize: 12
+                font.bold: root.selected || root.isDir
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: area
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.clicked()
+        }
+    }
+
+    component WorkspaceChangeRow: Rectangle {
+        id: root
+        property string name: ""
+        property string path: ""
+        property string kind: ""
+        property string summary: ""
+        signal clicked()
+
+        height: 40
+        radius: 4
+        color: area.containsMouse ? theme.panelHover : "transparent"
+        border.color: theme.line
+        border.width: 1
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.leftMargin: 8
+            anchors.rightMargin: 8
+            anchors.topMargin: 5
+            anchors.bottomMargin: 5
+            spacing: 1
+
+            Text {
+                Layout.fillWidth: true
+                text: root.name
+                color: theme.text
+                font.family: theme.mono
+                font.pixelSize: 11
+                font.bold: true
+                elide: Text.ElideRight
+            }
+
+            Text {
+                Layout.fillWidth: true
+                text: root.summary
+                color: theme.muted
+                font.family: theme.mono
+                font.pixelSize: 10
                 elide: Text.ElideRight
             }
         }
@@ -733,7 +854,7 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
-                height: 1
+                Layout.preferredHeight: 1
                 color: theme.line
             }
         }
@@ -974,13 +1095,24 @@ ApplicationWindow {
                         Repeater {
                             model: root.details
                             delegate: Text {
+                                property bool isDiffPath: String(modelData).indexOf("Diff: ") === 0
+                                property string diffPath: isDiffPath ? String(modelData).slice(6).trim() : ""
                                 Layout.fillWidth: true
-                                text: modelData
-                                color: theme.muted
+                                text: isDiffPath ? ("Open file: " + diffPath) : modelData
+                                color: isDiffPath ? theme.blue : theme.muted
                                 font.family: theme.mono
                                 font.pixelSize: 12
+                                font.underline: isDiffPath
                                 wrapMode: Text.Wrap
                                 textFormat: Text.PlainText
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: parent.isDiffPath
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: openWorkspacePath(parent.diffPath)
+                                }
                             }
                         }
 
@@ -1132,6 +1264,25 @@ ApplicationWindow {
                             }
                         }
 
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            TogglePill {
+                                Layout.fillWidth: true
+                                text: "Sessions"
+                                active: sidePage === "sessions"
+                                onClicked: sidePage = "sessions"
+                            }
+
+                            TogglePill {
+                                Layout.fillWidth: true
+                                text: "Workspace"
+                                active: sidePage === "workspace"
+                                onClicked: sidePage = "workspace"
+                            }
+                        }
+
                         Text {
                             Layout.fillWidth: true
                             text: backend ? backend.model_name_text : ""
@@ -1142,6 +1293,7 @@ ApplicationWindow {
                         }
 
                         RowLayout {
+                            visible: sidePage === "sessions"
                             Layout.fillWidth: true
                             spacing: 8
 
@@ -1160,12 +1312,14 @@ ApplicationWindow {
                         }
 
                         Rectangle {
+                            visible: sidePage === "sessions"
                             Layout.fillWidth: true
-                            height: 1
+                            Layout.preferredHeight: 1
                             color: theme.line
                         }
 
                         Text {
+                            visible: sidePage === "sessions"
                             Layout.fillWidth: true
                             text: "Sessions"
                             color: theme.muted
@@ -1176,6 +1330,7 @@ ApplicationWindow {
 
                         TextField {
                             id: sessionSearch
+                            visible: sidePage === "sessions"
                             Layout.fillWidth: true
                             placeholderText: "Search sessions..."
                             color: theme.text
@@ -1195,6 +1350,7 @@ ApplicationWindow {
 
                         ListView {
                             id: sessionList
+                            visible: sidePage === "sessions"
                             Layout.fillWidth: true
                             Layout.fillHeight: true
                             model: backend ? backend.sessions_model_object : []
@@ -1223,6 +1379,7 @@ ApplicationWindow {
                         }
 
                         RowLayout {
+                            visible: sidePage === "sessions"
                             Layout.fillWidth: true
                             spacing: 8
 
@@ -1259,6 +1416,202 @@ ApplicationWindow {
                                         var sid = sessionList.model.data(sessionList.model.index(sessionList.currentIndex, 0), Qt.UserRole + 1)
                                         if (sid) {
                                             backend.delete_session(sid)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        ColumnLayout {
+                            visible: sidePage === "workspace"
+                            Layout.fillWidth: true
+                            Layout.fillHeight: true
+                            spacing: 8
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Workspace"
+                                    color: theme.muted
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+
+                                TinyButton {
+                                    Layout.preferredWidth: 72
+                                    text: "Refresh"
+                                    onClicked: backend.refresh_workspace()
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: backend ? backend.workspace_root_text : ""
+                                color: theme.faint
+                                font.family: theme.mono
+                                font.pixelSize: 10
+                                elide: Text.ElideMiddle
+                            }
+
+                            ListView {
+                                id: workspaceTree
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: Math.max(180, parent.height * 0.38)
+                                model: backend ? backend.workspace_model_object : null
+                                clip: true
+                                spacing: 2
+                                boundsBehavior: Flickable.StopAtBounds
+
+                                ScrollBar.vertical: ScrollBar {
+                                    policy: ScrollBar.AsNeeded
+                                    active: true
+                                    width: 8
+                                }
+
+                                delegate: WorkspaceFileRow {
+                                    width: workspaceTree.width
+                                    name: model.name
+                                    path: model.path
+                                    depth: model.depth
+                                    isDir: model.isDir
+                                    hasChildren: model.hasChildren
+                                    expanded: model.expanded
+                                    selected: model.selected
+                                    kind: model.kind
+                                    summary: model.summary
+                                    onClicked: backend.select_workspace_path(model.path)
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 1
+                                color: theme.line
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 8
+
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: "Recent changes"
+                                    color: theme.muted
+                                    font.family: theme.mono
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+
+                                Text {
+                                    text: "jump"
+                                    color: theme.faint
+                                    font.family: theme.mono
+                                    font.pixelSize: 10
+                                }
+                            }
+
+                            ListView {
+                                id: workspaceChanges
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 120
+                                model: backend ? backend.workspace_changes_model_object : null
+                                clip: true
+                                spacing: 5
+                                boundsBehavior: Flickable.StopAtBounds
+
+                                ScrollBar.vertical: ScrollBar {
+                                    policy: ScrollBar.AsNeeded
+                                    active: true
+                                    width: 8
+                                }
+
+                                delegate: WorkspaceChangeRow {
+                                    width: workspaceChanges.width
+                                    name: model.name
+                                    path: model.path
+                                    kind: model.kind
+                                    summary: model.summary
+                                    onClicked: openWorkspacePath(model.path)
+                                }
+                            }
+
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                radius: 4
+                                color: theme.panel
+                                border.color: theme.line
+                                border.width: 1
+
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 8
+                                    spacing: 6
+
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: backend && backend.workspace_preview.name ? backend.workspace_preview.name : "Preview"
+                                            color: theme.text
+                                            font.family: theme.mono
+                                            font.pixelSize: 12
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+
+                                        TinyButton {
+                                            Layout.preferredWidth: 70
+                                            text: "Attach"
+                                            onClicked: {
+                                                if (backend && backend.workspace_preview.path) {
+                                                    backend.attach_workspace_path(backend.workspace_preview.path)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: backend ? backend.workspace_preview.summary : ""
+                                        color: theme.muted
+                                        font.family: theme.mono
+                                        font.pixelSize: 10
+                                        elide: Text.ElideRight
+                                    }
+
+                                    Image {
+                                        visible: backend && backend.workspace_preview.image_url
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        source: backend ? backend.workspace_preview.image_url : ""
+                                        fillMode: Image.PreserveAspectFit
+                                        cache: false
+                                    }
+
+                                    ScrollView {
+                                        visible: !(backend && backend.workspace_preview.image_url)
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        clip: true
+
+                                        TextArea {
+                                            text: backend ? backend.workspace_preview.content : ""
+                                            color: theme.text
+                                            placeholderText: "Select a workspace file."
+                                            placeholderTextColor: theme.muted
+                                            readOnly: true
+                                            wrapMode: TextArea.NoWrap
+                                            font.family: theme.mono
+                                            font.pixelSize: 11
+                                            textFormat: TextEdit.PlainText
+                                            background: Rectangle { color: "transparent" }
                                         }
                                     }
                                 }
