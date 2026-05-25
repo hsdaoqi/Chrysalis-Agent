@@ -46,5 +46,5 @@ workspace/browser_profile/
 logs/
 
 #可变文件
-global_mem.txt
-global_mem_insight.txt
+memory/global_mem.txt
+memory/global_mem_insight.txt
