@@ -105,6 +105,7 @@ class Kernel:
         self.tracker.end_task(run_task[:100], elapsed, model)
         result["usage"] = self.tracker.task_usage_dict()
         result["usage"]["cost"] = self.tracker.task_cost(model)
+        result["context"] = self.llm.context_usage()
         return result
 
     def cancel(self) -> None:
@@ -382,7 +383,69 @@ def format_interactive_result(result: dict) -> str:
             info_parts.append(_fmt_elapsed(elapsed))
         parts.append(f"[{' | '.join(info_parts)}]")
 
+    context_line = format_context_usage(result.get("context"))
+    if context_line:
+        parts.append(context_line)
+
     return "\n".join(parts)
+
+
+def format_context_usage(context: dict | None, width: int = 18) -> str:
+    """把上下文占用统计格式化成终端友好的进度条。"""
+    if not context:
+        return ""
+    budget_chars = int(context.get("budget_chars") or 0)
+    chars = int(context.get("chars") or 0)
+    if budget_chars <= 0:
+        return ""
+
+    ratio = max(0.0, min(1.0, chars / budget_chars))
+    filled = min(width, int(round(ratio * width)))
+    bar = "█" * filled + "░" * (width - filled)
+    percent = int(round(ratio * 100))
+    tokens = int(context.get("tokens_estimate") or 0)
+    window = int(context.get("context_window") or 0)
+    messages = int(context.get("messages") or 0)
+    soft_pct = int(round(float(context.get("soft_ratio") or 0) * 100))
+    hard_pct = int(round(float(context.get("hard_ratio") or 0) * 100))
+
+    parts = [
+        f"Context [{bar}] {percent}%",
+        f"~{_fmt_short(tokens)}/{_fmt_short(window)} tok",
+        f"{messages} msgs",
+        f"soft {soft_pct}%",
+        f"hard {hard_pct}%",
+    ]
+
+    compaction = context.get("last_compaction") or {}
+    actions = []
+    if compaction.get("micro"):
+        actions.append("micro")
+    if compaction.get("snip"):
+        actions.append("snip")
+    if compaction.get("full"):
+        actions.append("full")
+    if compaction.get("llm_full"):
+        actions.append("llm")
+    if compaction.get("reactive"):
+        actions.append("reactive")
+    archived = int(compaction.get("tool_results_archived") or 0)
+    if archived:
+        actions.append(f"archived {archived}")
+    if actions:
+        parts.append("compact: " + ",".join(actions))
+
+    return "[" + " | ".join(parts) + "]"
+
+
+def _fmt_short(n: int) -> str:
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 10_000:
+        return f"{n / 1_000:.1f}k"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k"
+    return str(n)
 
 
 def _elapsed_ms(started: float) -> int:

@@ -94,7 +94,7 @@ class AgentConfig:
     data_dir: Path = field(default_factory=lambda: project_path("data"))
     memory_dir: Path = field(default_factory=lambda: project_path("memory"))
     workspace_dir: Path = field(default_factory=lambda: project_path("workspace"))
-    max_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MAX_TURNS", "40")))
+    max_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MAX_TURNS", "70")))
     min_skill_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MIN_SKILL_TURNS", "16")))
 
     def __post_init__(self) -> None:

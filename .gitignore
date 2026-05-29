@@ -35,7 +35,6 @@ dist/
 
 # Chrysalis 运行态数据
 data/
-tests/
 
 # 浏览器/CDP 临时 profile
 browser_profile/

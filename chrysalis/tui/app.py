@@ -23,6 +23,7 @@ from chrysalis.tui.events import (
     VoiceResult,
     WorkingChange,
 )
+from chrysalis.kernel import format_context_usage
 
 SLASH_COMMANDS = [
     ("/help", "显示帮助信息"),
@@ -479,6 +480,9 @@ class ChrysalisApp(App):
         usage_line = self._format_usage(result)
         if usage_line:
             self._out(f"[#585b70]{usage_line}[/]")
+        context_line = format_context_usage(result.get("context"))
+        if context_line:
+            self._out(f"[#585b70]{context_line}[/]")
 
         if result.get("need_user"):
             self._out(f"[#f9e2af]⏸ Waiting for input…[/]")

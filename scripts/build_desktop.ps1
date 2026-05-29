@@ -45,11 +45,11 @@ if ($Shortcut) {
     $desktop = [Environment]::GetFolderPath("Desktop")
     $shortcutPath = Join-Path $desktop "Chrysalis.lnk"
     $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($shortcutPath)
-    $shortcut.TargetPath = $exePath
-    $shortcut.WorkingDirectory = Split-Path -Parent $exePath
-    $shortcut.Description = "Chrysalis Desktop"
-    $shortcut.Save()
+    $link = $shell.CreateShortcut($shortcutPath)
+    $link.TargetPath = $exePath
+    $link.WorkingDirectory = Split-Path -Parent $exePath
+    $link.Description = "Chrysalis Desktop"
+    $link.Save()
     Write-Host "Shortcut: $shortcutPath"
 }
 

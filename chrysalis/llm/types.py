@@ -39,6 +39,14 @@ class SessionConfig:
     thinking: str = "disabled"
     thinking_budget: int | None = None
     name: str = ""
+    compression_enabled: bool = True
+    compression_soft_limit_ratio: float = 0.70
+    compression_hard_limit_ratio: float = 0.90
+    compression_recent_turns: int = 8
+    compression_reactive_recent_turns: int = 5
+    compression_tail_token_budget: int | None = None
+    compression_tool_result_budget: int = 200_000
+    compression_max_failures: int = 3
 
     def __post_init__(self):
         self.base_url = self.base_url.rstrip("/")

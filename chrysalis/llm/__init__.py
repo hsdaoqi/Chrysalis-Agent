@@ -5,7 +5,7 @@
 """
 
 from chrysalis.llm.client import LLMClient
-from chrysalis.llm.context import compress_history_tags, trim_messages_history
+from chrysalis.llm.context import CompactionManager, compress_history_tags, trim_messages_history
 from chrysalis.llm.failover import FailoverSession
 from chrysalis.llm.session import BaseSession
 from chrysalis.llm.types import Response, SessionConfig, ToolCall, Usage
@@ -13,6 +13,7 @@ from chrysalis.llm.usage import UsageTracker
 
 __all__ = [
     "BaseSession",
+    "CompactionManager",
     "FailoverSession",
     "LLMClient",
     "Response",

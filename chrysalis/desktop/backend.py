@@ -15,7 +15,7 @@ from pathlib import Path
 from PySide6.QtCore import QAbstractListModel, QAbstractTableModel, QModelIndex, QObject, Property, Qt, QTimer, QUrl, Signal, Slot
 
 from configs.config import AgentConfig
-from chrysalis.kernel import Kernel
+from chrysalis.kernel import Kernel, format_context_usage
 from chrysalis.session_store import SessionStore
 from chrysalis.llm.types import Usage
 from chrysalis.llm.usage import _fmt_elapsed
@@ -1095,6 +1095,9 @@ class SessionController(QObject):
         usage_line = self._format_usage(result)
         if usage_line:
             self.messages_model.append(DesktopMessage(kind="usage", content=usage_line))
+        context_line = format_context_usage(result.get("context"))
+        if context_line:
+            self.messages_model.append(DesktopMessage(kind="usage", content=context_line))
         if result.get("need_user"):
             self.messages_model.append(DesktopMessage(kind="warning", content="Waiting for input..."))
         self.messages_model.append(DesktopMessage(kind="spacer"))

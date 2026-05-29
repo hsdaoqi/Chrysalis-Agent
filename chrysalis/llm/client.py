@@ -13,6 +13,7 @@ from typing import Callable, Generator
 
 from chrysalis.llm.logger import write_llm_log
 from chrysalis.llm.session import BaseSession
+from chrysalis.llm.context import estimate_request_cost
 from chrysalis.llm.types import Response, Usage
 from chrysalis.llm.usage import UsageTracker
 
@@ -174,3 +175,56 @@ class LLMClient:
 
     def reset_task_usage(self) -> None:
         self.tracker.begin_task()
+
+    def context_usage(self) -> dict:
+        """返回当前会话的上下文占用统计，不改动 history。"""
+        session = self._active_session()
+        history = session.history
+        system = getattr(session, "system", "") or ""
+        tools = getattr(session, "tools", None)
+        config = session.config
+        compaction = getattr(session, "compaction", None)
+
+        chars = estimate_request_cost(history, system=system, tools=tools)
+        budget_chars = max(1, config.context_window * 3)
+        soft_chars = int(budget_chars * getattr(config, "compression_soft_limit_ratio", 0.70))
+        hard_chars = int(budget_chars * getattr(config, "compression_hard_limit_ratio", 0.90))
+
+        block_counts: dict[str, int] = {}
+        for msg in history:
+            for block in msg.get("blocks", []):
+                if isinstance(block, dict):
+                    btype = str(block.get("type", "unknown"))
+                    block_counts[btype] = block_counts.get(btype, 0) + 1
+
+        stats = getattr(compaction, "last_stats", None)
+        return {
+            "chars": chars,
+            "tokens_estimate": max(1, chars // 3),
+            "budget_chars": budget_chars,
+            "context_window": config.context_window,
+            "ratio": min(1.0, chars / budget_chars),
+            "soft_chars": soft_chars,
+            "hard_chars": hard_chars,
+            "soft_ratio": soft_chars / budget_chars,
+            "hard_ratio": hard_chars / budget_chars,
+            "messages": len(history),
+            "blocks": block_counts,
+            "last_compaction": {
+                "before_chars": getattr(stats, "before_chars", 0),
+                "after_chars": getattr(stats, "after_chars", 0),
+                "micro": bool(getattr(stats, "micro_compacted", False)),
+                "snip": bool(getattr(stats, "snip_compacted", False)),
+                "full": bool(getattr(stats, "full_compacted", False)),
+                "llm_full": bool(getattr(stats, "llm_full_compacted", False)),
+                "reactive": bool(getattr(stats, "reactive_compacted", False)),
+                "tool_results_archived": int(getattr(stats, "tool_results_archived", 0)),
+            },
+        }
+
+    def _active_session(self) -> BaseSession:
+        session = self.session
+        if hasattr(session, "sessions") and getattr(session, "sessions"):
+            idx = getattr(session, "_current_idx", 0)
+            return session.sessions[idx]
+        return session
