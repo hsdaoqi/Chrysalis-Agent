@@ -44,6 +44,10 @@ workspace/browser_profile/
 *.log
 logs/
 
-#可变文件
+# 可变文件
 memory/global_mem.txt
 memory/global_mem_insight.txt
+
+# VitePress / Node.js
+node_modules/
+.npm-cache/
