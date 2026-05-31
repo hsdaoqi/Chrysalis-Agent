@@ -1,5 +1,21 @@
 [
   {
+    "name": "gpt5.5",
+    "provider": "openai",
+    "api_key": "sk-MHoCpjBcwq3OeA4Qs4henyFmbCnyushX8oHCMBFJLE28ALXm",
+    "model": "gpt-5.5",
+    "base_url": "https://fushengyunsuan.cn/v1",
+    "context_window": 400000
+  },
+  {
+    "name": "kiro-opus4.6",
+    "provider": "openai",
+    "api_key": "sk-w2C49elSeihMFB26uAF78XqpoZfoYEboxdIVrGQha3fJdkY5",
+    "model": "claude-opus-4-6",
+    "base_url": "https://fushengyunsuan.cn/v1",
+    "context_window": 400000
+  },
+  {
     "name": "deepseek",
     "provider": "openai",
     "api_key": "${CHRYSALIS_API_KEY}",

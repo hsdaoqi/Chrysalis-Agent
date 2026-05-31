@@ -31,6 +31,7 @@ class AgentLoop:
         history: list[str] | None = None,
         on_stream_chunk: "Callable[[str], None] | None" = None,
         on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
+        on_permission_request: "Callable[[dict], str] | None" = None,
         on_thinking: "Callable[[str], None] | None" = None,
         on_working_change: "Callable[[dict], None] | None" = None,
         use_function_calling: bool = True,
@@ -45,6 +46,7 @@ class AgentLoop:
         self.progress = progress
         self.on_stream_chunk = on_stream_chunk
         self.on_tool_call = on_tool_call
+        self.on_permission_request = on_permission_request
         self.on_thinking = on_thinking
         self.on_working_change = on_working_change
         self.use_function_calling = use_function_calling
@@ -161,7 +163,7 @@ class AgentLoop:
                 self._progress(summarize_observation(turn, "工具", compact))
 
                 if isinstance(observation, dict) and observation.get("need_user"):
-                    return {
+                    result = {
                         "ok": False,
                         "need_user": True,
                         "final": str(observation.get("question", "需要用户输入。")),
@@ -169,6 +171,10 @@ class AgentLoop:
                         "candidates": observation.get("candidates", []),
                         "reason": observation.get("reason", "need_user"),
                     }
+                    for key in ("permission_request", "options", "grant_key", "tool", "risk", "details", "decision"):
+                        if key in observation:
+                            result[key] = observation[key]
+                    return result
 
                 obs_text = dumps_observation(compact)
                 images = []
@@ -244,7 +250,7 @@ class AgentLoop:
             compact = compact_observation(observation)
             self._progress(summarize_observation(turn, "工具", compact))
             if isinstance(observation, dict) and observation.get("need_user"):
-                return {
+                result = {
                     "ok": False,
                     "need_user": True,
                     "final": str(observation.get("question", "需要用户输入。")),
@@ -252,6 +258,10 @@ class AgentLoop:
                     "candidates": observation.get("candidates", []),
                     "reason": observation.get("reason", "need_user"),
                 }
+                for key in ("permission_request", "options", "grant_key", "tool", "risk", "details", "decision"):
+                    if key in observation:
+                        result[key] = observation[key]
+                return result
             obs_text = "观察结果：\n" + dumps_observation(compact)
             messages.append({"role": "assistant", "content": json.dumps(action, ensure_ascii=False)})
             messages.append({"role": "user", "content": self._next_prompt_with_anchor(obs_text)})
@@ -326,7 +336,27 @@ class AgentLoop:
             session_context=session_context,
         )
         if permission.needs_user:
-            return permission.to_result()
+            resolved = self._resolve_permission_request(permission.to_result())
+            action = str(resolved.get("action", ""))
+            if action == "allow":
+                permission = self.permission_engine.assess_tool(
+                    tool_name,
+                    args,
+                    workspace=self.workspace,
+                    session_context=str(resolved.get("context", "")),
+                )
+            elif action == "deny":
+                return {"ok": False, "blocked": True, "error": "用户拒绝了权限请求"}
+            elif action == "detail":
+                return {
+                    "ok": False,
+                    "need_user": True,
+                    "question": str(resolved.get("context", "")),
+                    "candidates": [],
+                    "reason": "permission_detail",
+                }
+            else:
+                return permission.to_result()
         if permission.denied:
             return {
                 "ok": False,
@@ -373,6 +403,12 @@ class AgentLoop:
             turn=turn,
         ))
         return observation
+
+    def _resolve_permission_request(self, request: dict) -> dict:
+        if self.on_permission_request is None:
+            return {"action": "ask", "context": ""}
+        choice = self.on_permission_request(request)
+        return self.permission_engine.resolve_user_choice(request, choice)
 
     def _progress(self, message: str) -> None:
         if self.progress is not None:

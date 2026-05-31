@@ -4,11 +4,12 @@ import argparse
 import json
 import sys
 import time
+from pathlib import Path
 
 from chrysalis.agent_loop import AgentLoop
 from chrysalis import subagent
 from chrysalis.hooks import HookManager
-from chrysalis.permission import PermissionEngine
+from chrysalis.permission import FullAccessPermissionEngine, PermissionEngine
 from chrysalis.task_queue import TaskQueue
 from configs.config import AgentConfig
 from chrysalis.llm import LLMClient, UsageTracker, create_client
@@ -66,6 +67,7 @@ class Kernel:
             self.config.max_turns,
             progress=self.progress,
             history=self.history,
+            permission_engine=self._create_permission_engine(),
         )
         self.permission_engine = self.loop.permission_engine
         self.hooks = self.loop.hooks
@@ -78,10 +80,23 @@ class Kernel:
             progress=self.progress,
         )
 
+    def _create_permission_engine(self) -> PermissionEngine:
+        if self.config.permission_level.strip().lower() in {"full", "trusted", "off", "none"}:
+            return FullAccessPermissionEngine()
+        return PermissionEngine(
+            level=self.config.permission_level,
+            store_path=self.config.permissions_json,
+        )
+
     def run(self, task: str) -> dict:
         started = time.perf_counter()
         self.llm.reset_task_usage()
-        run_task, extra_context = self._resolve_pending_user_action(task)
+        run_task, extra_context, immediate = self._resolve_pending_user_action(task)
+        if immediate is not None:
+            immediate["elapsed_ms"] = _elapsed_ms(started)
+            immediate["usage"] = self.tracker.task_usage_dict()
+            immediate["context"] = self.llm.context_usage()
+            return immediate
         self._progress(f"开始任务：{run_task}")
 
         try:
@@ -97,6 +112,7 @@ class Kernel:
                 "task": run_task,
                 "question": result.get("question") or result.get("final", ""),
                 "reason": result.get("reason", "need_user"),
+                "result": result,
             }
 
         result["elapsed_ms"] = _elapsed_ms(started)
@@ -125,25 +141,51 @@ class Kernel:
         if self.progress is not None:
             self.progress(message)
 
-    def _resolve_pending_user_action(self, task: str) -> tuple[str, str]:
+    def _resolve_pending_user_action(self, task: str) -> tuple[str, str, dict | None]:
         if not self.pending_user_action:
-            return task, ""
+            return task, "", None
         normalized = task.strip().lower()
         pending = self.pending_user_action
         original_task = str(pending.get("task", task))
+        if pending.get("result", {}).get("permission_request"):
+            resolved = self.permission_engine.resolve_user_choice(pending["result"], task)
+            action = resolved.get("action")
+            if action == "allow":
+                self.pending_user_action = None
+                return original_task, str(resolved.get("context", "")), None
+            if action == "deny":
+                self.pending_user_action = None
+                return (
+                    original_task,
+                    "用户拒绝了此前的权限请求。请不要执行该操作，换一个不需要该权限的方案；如果没有可行方案，请说明原因。",
+                    None,
+                )
+            if action == "detail":
+                return "", "", {
+                    "ok": False,
+                    "need_user": True,
+                    "permission_request": True,
+                    "final": str(resolved.get("context", "")),
+                    "question": pending.get("question", ""),
+                    "options": pending["result"].get("options", []),
+                    "candidates": pending["result"].get("candidates", []),
+                    "reason": pending.get("reason", "permission_request"),
+                }
         if any(word in normalized for word in USER_ACTION_DONE_WORDS):
             self.pending_user_action = None
             return (
                 original_task,
                 "用户刚才已经完成此前需要的人为操作。请从当前状态继续原任务，不要重新从头搜索。",
+                None,
             )
         if any(word in normalized for word in USER_ACTION_SKIP_WORDS):
             self.pending_user_action = None
             return (
                 original_task,
                 "用户选择跳过此前需要人为操作的路径。请避开该路径，改用其他可行方案继续原任务。",
+                None,
             )
-        return task, ""
+        return task, "", None
 
     # ── Session management ──
 
@@ -186,6 +228,12 @@ def main() -> None:
         return
 
     task = " ".join(args.task).strip()
+    if args.task and args.task[0].lower() == "cron":
+        progress = None if args.quiet else stderr_progress
+        kernel = Kernel(progress=progress)
+        _handle_cron_command(kernel, " ".join(args.task), print)
+        return
+
     if args.interactive:
         progress = None if args.quiet else stderr_progress
         run_interactive(Kernel(progress=progress))
@@ -204,6 +252,8 @@ def main() -> None:
 
 QUEUE_COMMANDS = {"/queue", "/q"}
 QUEUE_ADD_PREFIX = ("/add ", "/a ")
+CRON_COMMANDS = {"/cron", "cron"}
+PERMISSION_COMMANDS = {"/permissions", "/permission", "/perm"}
 
 
 def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> None:
@@ -229,6 +279,14 @@ def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> No
         cmd_word = task.split()[0].lower() if task else ""
         if cmd_word in SESSION_COMMANDS:
             _handle_session_command(kernel, task, output_func)
+            continue
+
+        if cmd_word in CRON_COMMANDS:
+            _handle_cron_command(kernel, task, output_func)
+            continue
+
+        if cmd_word in PERMISSION_COMMANDS:
+            _handle_permission_command(kernel, task, output_func)
             continue
 
         if task.lower() in QUEUE_COMMANDS:
@@ -293,6 +351,148 @@ def _show_queue(queue: TaskQueue, output_func) -> None:
         if status in ("done", "failed") and t.get("result"):
             line += f"  -> {t['result'][:60]}"
         output_func(line)
+
+
+def _handle_permission_command(kernel: Kernel, raw: str, output_func) -> None:
+    parts = raw.strip().split(maxsplit=2)
+    sub = parts[1].lower() if len(parts) > 1 else "status"
+    level = kernel.permission_engine.level
+    if sub in {"status", "list", "ls", ""}:
+        grants = kernel.permission_engine.store.list_grants()
+        output_func(f"权限等级：{level}  (locked / balanced / full)")
+        output_func(f"永久授权：{len(grants)} 条")
+        for index, grant in enumerate(grants, 1):
+            output_func(
+                f"  {index}. [{grant.get('risk', '?')}] "
+                f"{grant.get('tool') or grant.get('kind')}: {grant.get('summary', '')}"
+            )
+        if not grants:
+            output_func("  暂无永久授权。")
+        return
+    output_func("用法：/permissions  查看权限等级和永久授权")
+
+
+def _handle_cron_command(kernel: Kernel, raw: str, output_func) -> None:
+    """Manage local scheduled jobs.
+
+    Minimal command forms:
+      /cron list
+      /cron tick
+      /cron daemon [seconds]
+      /cron run <id>
+      /cron pause <id>
+      /cron resume <id>
+      /cron remove <id>
+      /cron create '<json object>'
+    """
+    from chrysalis.cron.jobs import (
+        CronError,
+        create_job,
+        list_jobs,
+        load_job,
+        pause_job,
+        remove_job,
+        resume_job,
+    )
+    from chrysalis.cron.scheduler import run_daemon, run_job, save_job_output, tick
+
+    parts = raw.strip().split(maxsplit=2)
+    if parts and parts[0].lower() in CRON_COMMANDS:
+        parts = parts[1:]
+    sub = parts[0].lower() if parts else "list"
+    arg = parts[1] if len(parts) > 1 else ""
+
+    try:
+        if sub in {"list", "ls", ""}:
+            jobs = list_jobs(kernel.config, include_disabled=True)
+            if not jobs:
+                output_func("暂无 cron 任务。")
+                return
+            for job in jobs:
+                state = job.get("state", {})
+                enabled = "on" if job.get("enabled", True) else "off"
+                output_func(
+                    f"{job.get('id')} [{enabled}] {job.get('name')} | "
+                    f"{job.get('schedule_display')} | next={state.get('next_run_at')} | "
+                    f"last={state.get('last_status')}"
+                )
+            return
+
+        if sub == "tick":
+            count = tick(kernel.config, verbose=True)
+            output_func(f"cron tick 完成，执行 {count} 个任务。")
+            return
+
+        if sub == "daemon":
+            interval = int(arg) if arg else 60
+            run_daemon(kernel.config, interval=interval)
+            return
+
+        if sub == "create":
+            if not arg:
+                output_func('用法：/cron create {"id":"daily","schedule":{...},"prompt":"..."}')
+                output_func("也可用：/cron create @path/to/job.json")
+                return
+            if arg.startswith("@"):
+                spec_path = Path(arg[1:]).expanduser()
+                if not spec_path.is_absolute():
+                    spec_path = (kernel.config.root / spec_path).resolve()
+                spec = json.loads(spec_path.read_text(encoding="utf-8-sig"))
+            else:
+                spec = json.loads(arg)
+            job = create_job(
+                kernel.config,
+                schedule=spec["schedule"],
+                prompt=str(spec.get("prompt") or ""),
+                job_id=spec.get("id"),
+                name=spec.get("name"),
+                script=spec.get("script"),
+                no_agent=bool(spec.get("no_agent", False)),
+                context_from=spec.get("context_from") or [],
+                workdir=spec.get("workdir"),
+                deliver=spec.get("deliver", "local"),
+                repeat_times=spec.get("repeat_times"),
+                max_delay_minutes=spec.get("max_delay_minutes"),
+            )
+            output_func(f"已创建 cron 任务：{job['id']} next={job.get('state', {}).get('next_run_at')}")
+            return
+
+        if not arg:
+            output_func("用法：/cron <run|pause|resume|remove> <id>")
+            return
+
+        if sub == "pause":
+            job = pause_job(kernel.config, arg)
+            output_func(f"已暂停：{job['id']}")
+            return
+
+        if sub == "resume":
+            job = resume_job(kernel.config, arg)
+            output_func(f"已恢复：{job['id']} next={job.get('state', {}).get('next_run_at')}")
+            return
+
+        if sub in {"remove", "rm", "delete"}:
+            ok = remove_job(kernel.config, arg)
+            output_func("已删除。" if ok else f"任务不存在：{arg}")
+            return
+
+        if sub == "run":
+            job = load_job(kernel.config, arg)
+            if not job:
+                output_func(f"任务不存在：{arg}")
+                return
+            success, output_doc, final, error = run_job(kernel.config, job)
+            path = save_job_output(kernel.config, job["id"], output_doc)
+            output_func(f"手动执行完成：success={success} output={path}")
+            if error:
+                output_func(f"error={error}")
+            if final:
+                output_func(final)
+            return
+
+        output_func("未知 cron 命令。可用：list/create/tick/daemon/run/pause/resume/remove")
+    except (CronError, json.JSONDecodeError, KeyError, ValueError) as exc:
+        output_func(f"cron 命令错误：{exc}")
 
 
 def _handle_session_command(kernel: Kernel, raw: str, output_func) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ from chrysalis.tui.events import (
     ToolCallStarted,
     ToolCallCompleted,
     WorkingChange,
+    PermissionRequested,
 )
 
 if TYPE_CHECKING:
@@ -33,11 +35,14 @@ class AgentBridge:
         self._file_before: dict[str, str] = {}
         self._setup_callbacks()
         self._last_working_snapshot: dict = {}
+        self._permission_event = threading.Event()
+        self._permission_choice = ""
 
     def _setup_callbacks(self) -> None:
         self.kernel.loop.on_stream_chunk = self._on_stream_chunk
         self.kernel.loop.on_tool_call = self._on_tool_call
         self.kernel.loop.on_working_change = self._on_working_change
+        self.kernel.loop.on_permission_request = self._on_permission_request
 
     def run_task(self, task: str) -> None:
         """在后台线程中调用，阻塞直到任务完成。"""
@@ -52,7 +57,12 @@ class AgentBridge:
         self._post(StatusChange("idle"))
 
     def cancel_task(self) -> None:
+        self.answer_permission("拒绝")
         self.kernel.cancel()
+
+    def answer_permission(self, choice: str) -> None:
+        self._permission_choice = choice
+        self._permission_event.set()
 
     def _on_stream_chunk(self, chunk: str) -> None:
         self._stream_buffer += chunk
@@ -72,6 +82,16 @@ class AgentBridge:
     def _on_working_change(self, snapshot: dict) -> None:
         self._last_working_snapshot = snapshot if isinstance(snapshot, dict) else {}
         self._post(WorkingChange(self._last_working_snapshot))
+
+    def _on_permission_request(self, request: dict) -> str:
+        self._flush_stream()
+        self._permission_choice = ""
+        self._permission_event.clear()
+        self._post(PermissionRequested(request))
+        while not self._permission_event.wait(0.1):
+            if self.kernel.loop._cancel_event.is_set():
+                return "拒绝"
+        return self._permission_choice or "拒绝"
 
     def _on_progress(self, message: str) -> None:
         pass

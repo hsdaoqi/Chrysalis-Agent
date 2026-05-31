@@ -9,6 +9,7 @@ Chrysalis 是一个本地通用 agent。它不是只服务代码任务的 code a
 
 ## 使用教程
 
+#### [在线阅读](https://hsdaoqi.github.io/Chrysalis-Agent/)
 ### 1. 安装
 
 ```bash

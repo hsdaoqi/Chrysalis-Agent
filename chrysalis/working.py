@@ -109,6 +109,7 @@ class WorkingMemory:
             self.todo_goal = ""
             self.rounds_since_todo = 0
 
+        self._move_completed_to_bottom()
         self._touched = True
         return {"ok": True, "message": "TODO list updated", "todo_state": self.todo_snapshot()}
 
@@ -235,6 +236,13 @@ class WorkingMemory:
             if item.id not in seen:
                 ordered.append(item)
         return ordered
+
+    def _move_completed_to_bottom(self) -> None:
+        if not self.todos:
+            return
+        pending = [item for item in self.todos if item.status != "completed"]
+        completed = [item for item in self.todos if item.status == "completed"]
+        self.todos = pending + completed
 
     def snapshot(self) -> dict:
         data = {}

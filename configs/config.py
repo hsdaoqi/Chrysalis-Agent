@@ -96,6 +96,7 @@ class AgentConfig:
     workspace_dir: Path = field(default_factory=lambda: project_path("workspace"))
     max_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MAX_TURNS", "70")))
     min_skill_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MIN_SKILL_TURNS", "16")))
+    permission_level: str = field(default_factory=lambda: os.getenv("CHRYSALIS_PERMISSION_LEVEL", "balanced"))
 
     def __post_init__(self) -> None:
         self.skills_dir = project_path(self.skills_dir)
@@ -112,6 +113,10 @@ class AgentConfig:
     @property
     def model_responses_dir(self) -> Path:
         return self.data_dir / "model_responses"
+
+    @property
+    def permissions_json(self) -> Path:
+        return self.data_dir / "permissions.json"
 
     @property
     def l4_session_dir(self) -> Path:

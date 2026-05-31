@@ -22,6 +22,7 @@ from chrysalis.tui.events import (
     ToolCallStarted,
     VoiceResult,
     WorkingChange,
+    PermissionRequested,
 )
 from chrysalis.kernel import format_context_usage
 
@@ -33,6 +34,15 @@ SLASH_COMMANDS = [
     ("/session delete <n>", "删除第 n 个会话"),
     ("/queue", "查看任务队列"),
     ("/add <task>", "添加任务到队列"),
+    ("/cron", "查看 cron 定时任务"),
+    ("/cron list", "列出 cron 定时任务"),
+    ("/cron create @path", "从 JSON 文件创建 cron 任务"),
+    ("/cron tick", "手动执行到期 cron 任务"),
+    ("/cron run <id>", "手动执行 cron 任务"),
+    ("/cron pause <id>", "暂停 cron 任务"),
+    ("/cron resume <id>", "恢复 cron 任务"),
+    ("/cron remove <id>", "删除 cron 任务"),
+    ("/permissions", "查看权限等级和永久授权"),
     ("/exit", "退出"),
 ]
 
@@ -184,12 +194,12 @@ class TurnPanel(Static):
 class TodoPanel(Static):
     DEFAULT_CSS = """
     TodoPanel {
-        dock: right;
-        width: 46;
-        height: 1fr;
+        height: auto;
+        max-height: 8;
         background: #050505;
-        border-left: solid #2b2b3f;
-        padding: 0 1;
+        border-top: solid #2b2b3f;
+        padding: 0;
+        display: none;
     }
     """
 
@@ -201,6 +211,11 @@ class TodoPanel(Static):
         self._snapshot = snapshot if isinstance(snapshot, dict) else {}
         self._refresh_view()
 
+    def clear(self) -> None:
+        self._snapshot = {}
+        self.display = False
+        self.update("")
+
     def on_mount(self) -> None:
         self._refresh_view()
 
@@ -209,17 +224,28 @@ class TodoPanel(Static):
         todos = snapshot.get("todos") or []
         total = int(snapshot.get("total_count", len(todos)))
         pending = int(snapshot.get("pending_count", len([item for item in todos if item.get("status") != "completed"])))
-        rounds = int(snapshot.get("rounds_since_todo", 0))
-        interval = int(snapshot.get("todo_reminder_interval", 4))
         goal = str(snapshot.get("goal", "")).strip()
         active_id = str(snapshot.get("active_todo_id", ""))
 
-        lines = ["[#cdd6f4]TODO[/]", f"[#585b70]{pending}/{total} pending[/]"]
-        if goal:
-            lines.append(f"[#cdd6f4]Goal[/]  [#585b70]{goal}[/]")
-        lines.append(f"[#585b70]round {rounds}/{interval}[/]")
+        if not todos or pending <= 0:
+            self.display = False
+            self.update("")
+            return
 
-        for item in todos[:16]:
+        self.display = True
+        header = f"[#cdd6f4]TODO[/] [#585b70]{pending}/{total} pending[/]"
+        if goal:
+            header += f" [#585b70]|[/] [#cdd6f4]{goal}[/]"
+        lines = [header]
+
+        pending_items = [item for item in todos if str(item.get("status", "pending")) != "completed"]
+        completed_items = [item for item in todos if str(item.get("status", "pending")) == "completed"]
+        visible_items, hidden_pending = _compact_todo_items(pending_items)
+
+        for item in visible_items:
+            if item is None:
+                lines.append(f"[#585b70]... +{hidden_pending} pending[/]")
+                continue
             title = str(item.get("title", "")).strip() or "(untitled)"
             note = str(item.get("note", "")).strip()
             item_id = str(item.get("id", ""))
@@ -227,12 +253,16 @@ class TodoPanel(Static):
             active = item_id == active_id
             prefix = "->" if active else "-"
             suffix = f" [#585b70]{note}[/]" if note else ""
-            mark = "[#a6e3a1]x[/]" if status == "completed" else "[#585b70]o[/]"
+            mark = "[#a6e3a1]x[/]" if status == "completed" else "[#f9e2af]o[/]"
             style = "[#b4befe bold]" if active else "[#cdd6f4]"
             lines.append(f"{mark} {style}{prefix} {title}[/]{suffix}")
 
-        if not todos:
-            lines.append("[#585b70]No TODOs yet[/]")
+        if completed_items:
+            for item in completed_items[-2:]:
+                title = str(item.get("title", "")).strip() or "(untitled)"
+                note = str(item.get("note", "")).strip()
+                suffix = f" [#585b70]{note}[/]" if note else ""
+                lines.append(f"[#a6e3a1]x[/] [#585b70]- {title}[/]{suffix}")
 
         self.update(Text.from_markup("\n".join(lines)))
 
@@ -243,11 +273,6 @@ class ChrysalisApp(App):
     CSS = """
     Screen {
         background: #000000;
-    }
-    #todo-pane {
-        dock: right;
-        width: 34;
-        height: 1fr;
     }
     #scroll {
         height: 1fr;
@@ -261,7 +286,8 @@ class ChrysalisApp(App):
     }
     #bottom {
         dock: bottom;
-        height: 2;
+        height: auto;
+        max-height: 12;
         background: #000000;
         padding: 0 1;
     }
@@ -299,6 +325,12 @@ class ChrysalisApp(App):
         padding: 0;
         color: #585b70;
     }
+    #choice-hint {
+        height: auto;
+        max-height: 8;
+        padding: 0;
+        color: #cdd6f4;
+    }
     .final-answer {
         margin: 1 0 0 0;
         padding: 0 0;
@@ -335,12 +367,16 @@ class ChrysalisApp(App):
         self._has_final = False
         self._user_messages: list[tuple[str, Static]] = []
         self._autocomplete_widget: Static | None = None
+        self._choice_widget: Static | None = None
+        self._pending_choices: list[dict] = []
+        self._choice_index = 0
+        self._permission_waiting = False
         self._voice_recorder = None
 
     def compose(self) -> ComposeResult:
-        yield self.todo_panel
         yield ScrollableContainer(id="scroll")
         with Vertical(id="bottom"):
+            yield self.todo_panel
             with Vertical(id="input-row"):
                 yield Static("[#b4befe]>[/]", id="prompt")
                 yield Input(id="input")
@@ -357,10 +393,20 @@ class ChrysalisApp(App):
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         task = event.value.strip()
+        if self._pending_choices and not task:
+            task = str(self._pending_choices[self._choice_index].get("label", "")).strip()
         if not task:
             return
         event.input.clear()
         self._dismiss_autocomplete()
+        if self._permission_waiting:
+            self.bridge.answer_permission(task)
+            self._permission_waiting = False
+            self._dismiss_choices()
+            self._set_input(False)
+            self._update_status("thinking")
+            return
+        self._dismiss_choices()
 
         if task.lower() in {"/help", "/h", "/?"}:
             self._show_help()
@@ -368,6 +414,14 @@ class ChrysalisApp(App):
 
         if task.split()[0].lower() in {"/session", "/sessions", "/s"}:
             self._handle_session_command(task)
+            return
+
+        if task.split()[0].lower() == "/cron":
+            self._handle_cron_command(task)
+            return
+
+        if task.split()[0].lower() in {"/permissions", "/permission", "/perm"}:
+            self._handle_permission_command(task)
             return
 
         msg_widget = Static(f"[bold #cdd6f4]> {task}[/]", markup=True)
@@ -486,6 +540,9 @@ class ChrysalisApp(App):
 
         if result.get("need_user"):
             self._out(f"[#f9e2af]⏸ Waiting for input…[/]")
+            self._show_choices(result)
+        else:
+            self.todo_panel.clear()
 
         self._out("")
         self._stream_buf = ""
@@ -500,6 +557,13 @@ class ChrysalisApp(App):
     def on_working_change(self, event: WorkingChange) -> None:
         self.todo_panel.set_snapshot(event.snapshot)
 
+    def on_permission_requested(self, event: PermissionRequested) -> None:
+        self._permission_waiting = True
+        self._show_permission_request(event.request)
+        self._set_input(True)
+        self._update_status("approval")
+        self._scroll()
+
     # ── Actions ──
 
     def action_clear_screen(self) -> None:
@@ -509,12 +573,13 @@ class ChrysalisApp(App):
     def action_interrupt_or_quit(self) -> None:
         if self._is_busy():
             self.bridge.cancel_task()
+            self.todo_panel.clear()
             self._update_status("interrupting")
             return
         self.action_quit()
 
     def _is_busy(self) -> bool:
-        return self._streaming or self._current_panel is not None
+        return self._streaming or self._current_panel is not None or self._permission_waiting
 
     def action_jump_to_message(self) -> None:
         if not self._user_messages:
@@ -540,12 +605,44 @@ class ChrysalisApp(App):
 
     def on_key(self, event) -> None:
         inp = self.query_one("#input", Input)
-        if event.key == "tab" and inp.has_focus:
+        if self._pending_choices and event.key in {"up", "down"} and inp.has_focus:
+            event.prevent_default()
+            event.stop()
+            delta = -1 if event.key == "up" else 1
+            self._move_choice(delta)
+        elif self._pending_choices and event.key in {str(i) for i in range(1, 10)} and inp.has_focus:
+            index = int(event.key) - 1
+            if index < len(self._pending_choices):
+                event.prevent_default()
+                event.stop()
+                self._choice_index = index
+                self._render_choices()
+                choice = str(self._pending_choices[self._choice_index].get("label", "")).strip()
+                inp.value = choice
+                inp.cursor_position = len(choice)
+                inp.action_submit()
+        elif self._pending_choices and event.key == "enter" and inp.has_focus and not inp.value.strip():
+            event.prevent_default()
+            event.stop()
+            choice = str(self._pending_choices[self._choice_index].get("label", "")).strip()
+            inp.value = choice
+            inp.cursor_position = len(choice)
+            inp.action_submit()
+        elif event.key == "tab" and inp.has_focus:
             event.prevent_default()
             event.stop()
             self._handle_tab_complete()
         elif event.key == "escape" and self._autocomplete_widget:
             self._dismiss_autocomplete()
+        elif event.key == "escape" and self._permission_waiting:
+            event.prevent_default()
+            event.stop()
+            self.bridge.answer_permission("拒绝")
+            self._permission_waiting = False
+            self._dismiss_choices()
+            self.todo_panel.clear()
+            self._set_input(False)
+            self._update_status("thinking")
 
     def on_input_changed(self, event: Input.Changed) -> None:
         text = event.value
@@ -553,6 +650,8 @@ class ChrysalisApp(App):
             self._show_autocomplete(text)
         else:
             self._dismiss_autocomplete()
+        if self._pending_choices and text.strip():
+            self._dismiss_choices(keep_pending=True)
 
     def _handle_tab_complete(self) -> None:
         inp = self.query_one("#input", Input)
@@ -591,6 +690,63 @@ class ChrysalisApp(App):
         if self._autocomplete_widget:
             self._autocomplete_widget.remove()
             self._autocomplete_widget = None
+
+    def _show_choices(self, result: dict) -> None:
+        choices = result.get("options") or []
+        if not choices:
+            choices = [
+                {"label": str(candidate), "description": ""}
+                for candidate in result.get("candidates", [])
+                if str(candidate).strip()
+            ]
+        self._pending_choices = [choice for choice in choices if str(choice.get("label", "")).strip()]
+        self._choice_index = 0
+        if self._pending_choices:
+            self._render_choices()
+
+    def _render_choices(self) -> None:
+        parts = []
+        for index, choice in enumerate(self._pending_choices):
+            label = str(choice.get("label", "")).strip()
+            number = f"{index + 1}."
+            if index == self._choice_index:
+                parts.append(f"[#b4befe]> {number} {label}[/]")
+            else:
+                parts.append(f"[#585b70]  {number} {label}[/]")
+        hint = "\n".join(parts)
+        if self._choice_widget is None:
+            self._choice_widget = Static(hint, markup=True, id="choice-hint")
+            bottom = self.query_one("#bottom", Vertical)
+            bottom.mount(self._choice_widget, before=0)
+        else:
+            self._choice_widget.update(hint)
+        self._update_status("Enter to select · ↑/↓ navigate · Esc to cancel")
+
+    def _move_choice(self, delta: int) -> None:
+        if not self._pending_choices:
+            return
+        self._choice_index = (self._choice_index + delta) % len(self._pending_choices)
+        self._render_choices()
+
+    def _dismiss_choices(self, keep_pending: bool = False) -> None:
+        if self._choice_widget:
+            self._choice_widget.remove()
+            self._choice_widget = None
+        if not keep_pending:
+            self._pending_choices = []
+            self._choice_index = 0
+
+    def _show_permission_request(self, request: dict) -> None:
+        question = str(request.get("question", "需要确认权限"))
+        tool = str(request.get("tool", "") or "command")
+        summary = _permission_summary_from_request(request)
+        self._out("")
+        self._out(f"[#b4befe]{tool}[/]")
+        self._out(f"[#cdd6f4]{summary}[/]")
+        self._out("[#585b70]This command requires approval[/]")
+        self._out(f"[#cdd6f4]{question}[/]")
+        self._out("[#585b70]Do you want to proceed?[/]")
+        self._show_choices(request)
 
     # ── Voice input ──
 
@@ -690,6 +846,22 @@ class ChrysalisApp(App):
             marker = " [#a6e3a1]*[/]" if s["id"] == current else ""
             self._out(f"  [#cdd6f4]{i}.[/] {s['title']}  [#585b70][{s['model']}] {s['turns']}t  {s['updated_at']}[/]{marker}")
         self._out("[#585b70]  /session load <n> 加载 | /session new 新建 | /session delete <n> 删除[/]")
+
+    def _handle_cron_command(self, raw: str) -> None:
+        from chrysalis.kernel import _handle_cron_command
+
+        def emit(text: str) -> None:
+            self._out(str(text))
+
+        _handle_cron_command(self.bridge.kernel, raw, emit)
+
+    def _handle_permission_command(self, raw: str) -> None:
+        from chrysalis.kernel import _handle_permission_command
+
+        def emit(text: str) -> None:
+            self._out(str(text))
+
+        _handle_permission_command(self.bridge.kernel, raw, emit)
 
     # ── Helpers ──
 
@@ -867,6 +1039,30 @@ def _common_prefix(strings: list[str]) -> str:
             if not prefix:
                 return ""
     return prefix
+
+
+def _permission_summary_from_request(request: dict) -> str:
+    tool = str(request.get("tool", "") or "command")
+    details = request.get("details") if isinstance(request.get("details"), dict) else {}
+    if tool == "code_run":
+        code_type = str(details.get("code_type", "code"))
+        preview = str(details.get("preview", "")).strip()
+        first_line = preview.splitlines()[0] if preview else ""
+        if len(first_line) > 120:
+            first_line = first_line[:119] + "…"
+        return f"{code_type} command" + (f"  {first_line}" if first_line else "")
+    if tool in {"file_write", "file_patch", "file_read"}:
+        return str(details.get("path", request.get("question", "")))
+    if tool == "web_scan":
+        return str(details.get("url", "(current tab)"))
+    return str(request.get("question", tool))
+
+
+def _compact_todo_items(items: list[dict]) -> tuple[list[dict | None], int]:
+    if len(items) <= 4:
+        return items, 0
+    hidden = len(items) - 4
+    return [items[0], items[1], None, items[-2], items[-1]], hidden
 
 
 _RICH_TAG_RE = re.compile(r"\[/?(?:#[0-9a-fA-F]{3,8}|[a-zA-Z][a-zA-Z0-9_ -]*(?: [^\]]*)?)\]")

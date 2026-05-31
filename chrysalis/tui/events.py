@@ -61,3 +61,9 @@ class WorkingChange(Message):
     def __init__(self, snapshot: dict) -> None:
         super().__init__()
         self.snapshot = snapshot
+
+
+class PermissionRequested(Message):
+    def __init__(self, request: dict) -> None:
+        super().__init__()
+        self.request = request
