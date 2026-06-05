@@ -9,8 +9,15 @@ from pathlib import Path
 from chrysalis.agent_loop import AgentLoop
 from chrysalis import subagent
 from chrysalis.hooks import HookManager
+from chrysalis.memory import MemoryReviewStore
 from chrysalis.permission import FullAccessPermissionEngine, PermissionEngine
 from chrysalis.task_queue import TaskQueue
+from chrysalis.gateway.bootstrap import (
+    format_launch_summary,
+    normalize_gateway_platforms,
+    run_connect_cli,
+    start_gateway_process,
+)
 from configs.config import AgentConfig
 from chrysalis.llm import LLMClient, UsageTracker, create_client
 from chrysalis.session_store import SessionStore
@@ -18,12 +25,14 @@ from utils.progress import ProgressCallback, stderr_progress
 
 HELP_TEXT = """用法：
   chrysalis [--quiet] <任务>
+  chrysalis connect [wechat|qq|feishu] [--background]
   chrysalis --interactive
   chrysalis --tui
   python -m chrysalis.kernel [--quiet] <任务>
 
 参数：
   <任务>        交给 agent 的任务
+  connect      启动消息网关并准备微信/QQ/飞书接入
   -i, --interactive
                 进入连续对话模式
   --tui        启动终端 UI 模式
@@ -35,6 +44,11 @@ EXIT_COMMANDS = {"/exit", "/quit", "exit", "quit", "退出", "再见"}
 SESSION_COMMANDS = {"/session", "/sessions", "/s"}
 USER_ACTION_DONE_WORDS = ("已完成", "完成了", "弄好了", "操作好了", "已登录", "登录好了", "登录完成", "继续")
 USER_ACTION_SKIP_WORDS = ("跳过", "不登录", "跳过登录", "换方案", "换公开", "公开来源", "不用这个")
+QUEUE_COMMANDS = {"/queue", "/q"}
+QUEUE_ADD_PREFIX = ("/add ", "/a ")
+CRON_COMMANDS = {"/cron", "cron"}
+PERMISSION_COMMANDS = {"/permissions", "/permission", "/perm"}
+CONNECT_COMMANDS = {"connect", "/connect"}
 
 
 class Kernel:
@@ -60,6 +74,7 @@ class Kernel:
         if llm and not llm._on_history_changed:
             llm._on_history_changed = self.session_store.save
         self.pending_user_action: dict | None = None  # 记录 ask_user 等待用户操作后的续跑状态
+        self._resume_prompt_internal = False
         self.history: list[str] = []  # 轻量 session anchor 文本历史
         self.loop = AgentLoop(  # 真正执行观察-行动循环的 AgentLoop
             self.llm,
@@ -88,7 +103,12 @@ class Kernel:
             store_path=self.config.permissions_json,
         )
 
-    def run(self, task: str) -> dict:
+    def set_permission_level(self, level: str) -> None:
+        self.config.permission_level = level
+        self.loop.permission_engine = self._create_permission_engine()
+        self.permission_engine = self.loop.permission_engine
+
+    def run(self, task: str, session_context: str = "", images: list[dict] | None = None) -> dict:
         started = time.perf_counter()
         self.llm.reset_task_usage()
         run_task, extra_context, immediate = self._resolve_pending_user_action(task)
@@ -97,10 +117,13 @@ class Kernel:
             immediate["usage"] = self.tracker.task_usage_dict()
             immediate["context"] = self.llm.context_usage()
             return immediate
+        ui_kind = "continue_prompt" if self._resume_prompt_internal else ""
+        self._resume_prompt_internal = False
+        merged_context = "\n\n".join(part for part in (session_context, extra_context) if part)
         self._progress(f"开始任务：{run_task}")
 
         try:
-            result = self.loop.run(run_task, session_context=extra_context)
+            result = self.loop.run(run_task, session_context=merged_context, images=images, ui_kind=ui_kind)
         except Exception as exc:
             result = {
                 "ok": False,
@@ -122,6 +145,7 @@ class Kernel:
         result["usage"] = self.tracker.task_usage_dict()
         result["usage"]["cost"] = self.tracker.task_cost(model)
         result["context"] = self.llm.context_usage()
+        self._capture_memory_review(run_task, result)
         return result
 
     def cancel(self) -> None:
@@ -141,6 +165,27 @@ class Kernel:
         if self.progress is not None:
             self.progress(message)
 
+    def _capture_memory_review(self, task: str, result: dict) -> None:
+        decision = result.get("memory_decision")
+        if not isinstance(decision, dict):
+            return
+        target = str(decision.get("target") or "").strip().lower()
+        if target not in {"fact", "user_profile"} or not bool(decision.get("should_persist")):
+            return
+        try:
+            store = MemoryReviewStore(self.config.data_dir / "memory_reviews.json", self.config.memory_dir)
+            item = store.create_from_decision(
+                task=task,
+                result=result,
+                decision=decision,
+                working=self.loop.working,
+                session_id=self.session_store.current_id or "",
+            )
+            if item:
+                result["memory_review_item"] = item
+        except Exception as exc:
+            result["memory_review_error"] = f"{type(exc).__name__}: {exc}"
+
     def _resolve_pending_user_action(self, task: str) -> tuple[str, str, dict | None]:
         if not self.pending_user_action:
             return task, "", None
@@ -152,9 +197,11 @@ class Kernel:
             action = resolved.get("action")
             if action == "allow":
                 self.pending_user_action = None
+                self._resume_prompt_internal = True
                 return original_task, str(resolved.get("context", "")), None
             if action == "deny":
                 self.pending_user_action = None
+                self._resume_prompt_internal = True
                 return (
                     original_task,
                     "用户拒绝了此前的权限请求。请不要执行该操作，换一个不需要该权限的方案；如果没有可行方案，请说明原因。",
@@ -173,6 +220,7 @@ class Kernel:
                 }
         if any(word in normalized for word in USER_ACTION_DONE_WORDS):
             self.pending_user_action = None
+            self._resume_prompt_internal = True
             return (
                 original_task,
                 "用户刚才已经完成此前需要的人为操作。请从当前状态继续原任务，不要重新从头搜索。",
@@ -180,12 +228,24 @@ class Kernel:
             )
         if any(word in normalized for word in USER_ACTION_SKIP_WORDS):
             self.pending_user_action = None
+            self._resume_prompt_internal = True
             return (
                 original_task,
                 "用户选择跳过此前需要人为操作的路径。请避开该路径，改用其他可行方案继续原任务。",
                 None,
             )
-        return task, "", None
+        self.pending_user_action = None
+        self._resume_prompt_internal = True
+        question = str(pending.get("question") or "").strip()
+        answer = task.strip()
+        context_parts = [
+            "用户刚才回答了此前 ask_user 问题。请基于这个回答继续原任务，不要把它当成一个新任务，也不要重复询问相同问题。",
+        ]
+        if question:
+            context_parts.append(f"此前问题：{question}")
+        if answer:
+            context_parts.append(f"用户回答：{answer}")
+        return original_task, "\n".join(context_parts), None
 
     # ── Session management ──
 
@@ -211,6 +271,10 @@ class Kernel:
 
 
 def main() -> None:
+    if len(sys.argv) > 1 and sys.argv[1].lower() in CONNECT_COMMANDS:
+        run_connect_cli(sys.argv[2:])
+        return
+
     if any(arg in {"-h", "--help"} for arg in sys.argv[1:]):
         print(HELP_TEXT)
         return
@@ -250,17 +314,11 @@ def main() -> None:
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
 
 
-QUEUE_COMMANDS = {"/queue", "/q"}
-QUEUE_ADD_PREFIX = ("/add ", "/a ")
-CRON_COMMANDS = {"/cron", "cron"}
-PERMISSION_COMMANDS = {"/permissions", "/permission", "/perm"}
-
-
 def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> None:
     """运行一个最小交互循环：一行任务执行一次，直到用户退出。"""
     queue = TaskQueue(kernel.config.data_dir / "task_queue.json")
     output_func("Chrysalis 交互模式。输入 /exit 或 退出 结束。")
-    output_func("  /session — 管理会话  /queue — 管理任务队列")
+    output_func("  /session — 管理会话  /queue — 管理任务队列  /connect wechat|qq|feishu — 启动消息网关")
     pending = queue.pending_count()
     if pending:
         output_func(f"  队列中有 {pending} 个待处理任务。输入回车自动执行，或 /queue 查看。")
@@ -287,6 +345,10 @@ def run_interactive(kernel: Kernel, input_func=input, output_func=print, ) -> No
 
         if cmd_word in PERMISSION_COMMANDS:
             _handle_permission_command(kernel, task, output_func)
+            continue
+
+        if cmd_word in CONNECT_COMMANDS:
+            _handle_connect_command(task, output_func)
             continue
 
         if task.lower() in QUEUE_COMMANDS:
@@ -370,6 +432,30 @@ def _handle_permission_command(kernel: Kernel, raw: str, output_func) -> None:
             output_func("  暂无永久授权。")
         return
     output_func("用法：/permissions  查看权限等级和永久授权")
+
+
+def _handle_connect_command(raw: str, output_func) -> None:
+    parts = raw.strip().split()
+    if not parts:
+        parts = ["connect", "wechat"]
+    start_index = 1 if parts[0].lower() in CONNECT_COMMANDS else 0
+    platform_parts = [part for part in parts[start_index:] if not part.startswith("-")]
+    try:
+        platforms = normalize_gateway_platforms(platform_parts or ["wechat"])
+    except SystemExit as exc:
+        output_func(str(exc))
+        return
+    hidden = "--hidden" in parts
+    try:
+        result = start_gateway_process(
+            platforms,
+            shared_groups="--shared-groups" in parts,
+            visible=not hidden,
+        )
+    except SystemExit as exc:
+        output_func(str(exc))
+        return
+    output_func(format_launch_summary(result))
 
 
 def _handle_cron_command(kernel: Kernel, raw: str, output_func) -> None:
@@ -634,6 +720,20 @@ def format_context_usage(context: dict | None, width: int = 18) -> str:
         actions.append(f"archived {archived}")
     if actions:
         parts.append("compact: " + ",".join(actions))
+
+    assembly = context.get("assembly") or {}
+    sections = assembly.get("sections") if isinstance(assembly, dict) else []
+    if isinstance(sections, list) and sections:
+        top = []
+        for section in sections[:4]:
+            if not isinstance(section, dict):
+                continue
+            label = str(section.get("label") or section.get("name") or "").strip()
+            used = int(section.get("used_chars") or 0)
+            if label and used:
+                top.append(f"{label}:{_fmt_short(used)}ch")
+        if top:
+            parts.append("ctx: " + ",".join(top))
 
     return "[" + " | ".join(parts) + "]"
 

@@ -11,6 +11,7 @@ import chrysalis.tools.file_tools
 import chrysalis.tools.web_tools
 import chrysalis.tools.code_tools
 import chrysalis.tools.agent_tools
+import chrysalis.tools.skill_tools
 import chrysalis.tools.vision_tools
 
 TOOL_PROMPT = generate_tool_prompt()

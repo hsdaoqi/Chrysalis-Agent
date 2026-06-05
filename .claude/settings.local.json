@@ -17,7 +17,9 @@
       "Bash(python -c \"from textual.widgets import Markdown; print\\('Markdown widget available'\\)\")",
       "Bash(python -c \"from chrysalis.llm.context import trim_messages_history, compress_history_tags; print\\('OK'\\)\")",
       "Bash(python -c \"from chrysalis.tui.events import VoiceResult; print\\('events OK'\\)\")",
-      "Bash(python *)"
+      "Bash(python *)",
+      "Bash(npx skills *)",
+      "Bash(curl -sL \"https://raw.githubusercontent.com/anthropics/claude-code/main/plugins/frontend-design/skills/frontend-design/SKILL.md\")"
     ]
   }
 }

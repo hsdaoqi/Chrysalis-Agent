@@ -1,2 +1,0 @@
-"""Chrysalis desktop app package."""
-

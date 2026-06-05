@@ -11,6 +11,8 @@ import string
 from datetime import datetime
 from pathlib import Path
 
+from chrysalis.history_display import has_tool_result, message_blocks, visible_user_text
+
 
 def _generate_id() -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -19,16 +21,29 @@ def _generate_id() -> str:
 
 
 def _extract_title(history: list[dict], max_len: int = 40) -> str:
+    """从第一条 user text block 生成默认标题。"""
     for msg in history:
         if msg.get("role") != "user":
             continue
-        for block in msg.get("blocks", []):
-            if block.get("type") == "text":
-                text = block.get("text", "").strip()
-                if text:
-                    text = text.replace("\n", " ")
-                    return text[:max_len] if len(text) > max_len else text
+        text = visible_user_text(msg)
+        if text:
+            text = text.replace("\n", " ")
+            return text[:max_len] if len(text) > max_len else text
     return "Untitled"
+
+
+def _count_user_turns(history: list[dict]) -> int:
+    turns = 0
+    for msg in history:
+        if msg.get("role") != "user":
+            continue
+        blocks = message_blocks(msg)
+        if has_tool_result(blocks):
+            continue
+        text = visible_user_text(msg)
+        if text:
+            turns += 1
+    return turns
 
 
 def _session_sort_key(path: Path) -> tuple[int, float]:
@@ -71,7 +86,7 @@ class SessionStore:
             "created_at": self._get_created_at(),
             "updated_at": datetime.now().isoformat(timespec="seconds"),
             "model": self._model,
-            "turns": len(history),
+            "turns": _count_user_turns(history),
             "history": history,
         }
 
@@ -111,7 +126,7 @@ class SessionStore:
                     "title": data.get("title", "Untitled"),
                     "updated_at": data.get("updated_at", ""),
                     "model": data.get("model", ""),
-                    "turns": data.get("turns", 0),
+                    "turns": _count_user_turns(data.get("history", [])) if isinstance(data.get("history"), list) else data.get("turns", 0),
                     "pinned": bool(data.get("pinned", False)),
                 })
             except (json.JSONDecodeError, OSError):
@@ -137,10 +152,14 @@ class SessionStore:
         data["title"] = title
         data["custom_title"] = title
         data["updated_at"] = datetime.now().isoformat(timespec="seconds")
-        self._write_session_data(session_id, data)
+        try:
+            self._write_session_data(session_id, data)
+        except OSError:
+            return False
         return True
 
     def set_pinned(self, session_id: str, pinned: bool) -> bool:
+        """设置（修改）某个特定会话（Session）的“置顶”或“固定”状态。"""
         data = self._read_session_data(session_id)
         if data is None:
             return False
@@ -153,6 +172,7 @@ class SessionStore:
         return self.sessions_dir / f"{session_id}.json"
 
     def _read_session_data(self, session_id: str) -> dict | None:
+        """读取某个会话的数据"""
         path = self._session_path(session_id)
         if not path.exists():
             return None
@@ -162,6 +182,7 @@ class SessionStore:
             return None
 
     def _write_session_data(self, session_id: str, data: dict) -> None:
+        """将用户的会话数据（Session Data）以 JSON 格式安全、可靠地保存到本地磁盘文件中。"""
         path = self._session_path(session_id)
         tmp_path = path.with_suffix(".tmp")
         tmp_path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
@@ -173,6 +194,7 @@ class SessionStore:
         return self._read_session_data(session_id) or {}
 
     def _get_created_at(self) -> str:
+        """获取创建时间"""
         if not self._current_id:
             return datetime.now().isoformat(timespec="seconds")
         path = self._session_path(self._current_id)

@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chrysalis - Warm Editorial</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@300;400;600;700&family=IBM+Plex+Mono:wght@300;400;500&family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #faf7f2;
+  --bg-warm: #f3ede4;
+  --bg-card: #ffffff;
+  --ink: #2c2416;
+  --ink-light: #8c7e6a;
+  --accent: #c44d2b;
+  --accent-soft: rgba(196,77,43,0.08);
+  --green: #3d7c4f;
+  --border: #e8e0d4;
+  --radius: 12px;
+}
+
+body {
+  font-family: 'Source Serif 4', serif;
+  background: var(--bg);
+  color: var(--ink);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr 260px;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+}
+
+/* Top bar */
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  padding: 0 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 240px;
+}
+
+.logo-mark {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo-mark::after {
+  content: 'C';
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  color: white;
+  font-size: 15px;
+}
+
+.topbar-title {
+  font-family: 'Fraunces', serif;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.topbar-center {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+}
+
+.tab {
+  font-size: 13px;
+  color: var(--ink-light);
+  padding: 4px 0;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  transition: all 0.2s;
+}
+
+.tab:hover { color: var(--ink); }
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.permission-indicator {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+/* Sidebar */
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: var(--bg-card);
+}
+
+.sidebar-heading {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--ink-light);
+  padding: 0 12px;
+  margin-bottom: 12px;
+}
+
+.new-chat-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: transparent;
+  font-family: 'Source Serif 4', serif;
+  font-size: 13px;
+  color: var(--ink-light);
+  cursor: pointer;
+  margin-bottom: 16px;
+  transition: all 0.2s;
+}
+
+.new-chat-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chat-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 4px;
+  transition: all 0.15s;
+}
+
+.chat-item:hover { background: var(--bg-warm); }
+.chat-item.active { background: var(--accent-soft); }
+
+.chat-item .ci-title {
+  font-size: 13px;
+  font-weight: 400;
+  margin-bottom: 2px;
+  line-height: 1.4;
+}
+
+.chat-item.active .ci-title { color: var(--accent); font-weight: 600; }
+
+.chat-item .ci-time {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 10px;
+  color: var(--ink-light);
+}
+
+/* Main Content */
+.main {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 48px;
+  max-width: 780px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.msg {
+  margin-bottom: 32px;
+}
+
+.msg-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--ink-light);
+  margin-bottom: 8px;
+}
+
+.msg.agent .msg-label { color: var(--accent); }
+
+.msg-body {
+  font-size: 15px;
+  line-height: 1.8;
+}
+
+.msg-body p { margin-bottom: 12px; }
+
+.msg-body .thought {
+  padding: 16px 20px;
+  background: var(--bg-warm);
+  border-radius: 8px;
+  border-left: 3px solid var(--accent);
+  margin: 12px 0;
+  font-size: 14px;
+  font-style: italic;
+  color: var(--ink-light);
+}
+
+.msg-body .tool-block {
+  margin: 12px 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tool-block .tool-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.msg-body .code {
+  margin: 12px 0;
+  padding: 16px 20px;
+  border-radius: 8px;
+  background: #2c2416;
+  color: #f3ede4;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  line-height: 1.7;
+  overflow-x: auto;
+}
+
+.msg-body ol {
+  padding-left: 20px;
+  margin: 8px 0;
+}
+
+.msg-body li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+/* Input */
+.input-wrap {
+  padding: 20px 48px 28px;
+  max-width: 780px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.input-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 12px rgba(44,36,22,0.04);
+  transition: all 0.2s;
+}
+
+.input-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 4px 20px rgba(196,77,43,0.08);
+}
+
+.input-field textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-family: 'Source Serif 4', serif;
+  font-size: 15px;
+  color: var(--ink);
+  resize: none;
+  height: 24px;
+  background: transparent;
+}
+
+.input-field textarea::placeholder { color: var(--ink-light); }
+
+.send-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  border: none;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: all 0.2s;
+}
+
+.send-btn:hover {
+  background: #a93d1f;
+  transform: translateY(-1px);
+}
+
+/* Right Panel */
+.right-panel {
+  border-left: 1px solid var(--border);
+  padding: 20px 16px;
+  overflow-y: auto;
+  background: var(--bg-card);
+}
+
+.rp-heading {
+  font-family: 'Fraunces', serif;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.rp-section { margin-bottom: 24px; }
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.stat-row .label { color: var(--ink-light); }
+.stat-row .value {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+}
+
+.working-mem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wm-chip {
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  background: var(--bg-warm);
+  color: var(--ink-light);
+  border: 1px solid var(--border);
+}
+
+.wm-chip.highlight {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-color: rgba(196,77,43,0.2);
+}
+
+.timeline {
+  position: relative;
+  padding-left: 16px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 4px;
+  bottom: 4px;
+  width: 1px;
+  background: var(--border);
+}
+
+.tl-item {
+  position: relative;
+  padding: 6px 0;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  color: var(--ink-light);
+}
+
+.tl-item::before {
+  content: '';
+  position: absolute;
+  left: -14px;
+  top: 11px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  border: 2px solid var(--bg-card);
+}
+
+.tl-item.current::before {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="logo-mark"></div>
+      <div class="topbar-title">Chrysalis</div>
+    </div>
+    <div class="topbar-center">
+      <span class="tab active">对话</span>
+      <span class="tab">记忆库</span>
+      <span class="tab">技能</span>
+      <span class="tab">工作区</span>
+    </div>
+    <div class="topbar-right">
+      <span class="permission-indicator">balanced</span>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <button class="new-chat-btn">+ 新建对话</button>
+    <div class="sidebar-heading">今天</div>
+    <div class="chat-item active">
+      <div class="ci-title">认证模块安全重构</div>
+      <div class="ci-time">14:32</div>
+    </div>
+    <div class="chat-item">
+      <div class="ci-title">优化首页加载速度</div>
+      <div class="ci-time">11:05</div>
+    </div>
+    <div class="sidebar-heading" style="margin-top:16px;">昨天</div>
+    <div class="chat-item">
+      <div class="ci-title">数据库索引调优</div>
+      <div class="ci-time">16:40</div>
+    </div>
+    <div class="chat-item">
+      <div class="ci-title">编写部署文档</div>
+      <div class="ci-time">09:12</div>
+    </div>
+    <div class="sidebar-heading" style="margin-top:16px;">本周</div>
+    <div class="chat-item">
+      <div class="ci-title">WebSocket 实时通知</div>
+      <div class="ci-time">周二</div>
+    </div>
+    <div class="chat-item">
+      <div class="ci-title">日志收集方案设计</div>
+      <div class="ci-time">周一</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="messages">
+      <div class="msg user">
+        <div class="msg-label">你</div>
+        <div class="msg-body">
+          <p>auth middleware 把 session token 直接存 cookie，法务说不符合新的合规要求。帮我改成服务端存储。</p>
+        </div>
+      </div>
+
+      <div class="msg agent">
+        <div class="msg-label">Chrysalis</div>
+        <div class="msg-body">
+          <div class="thought">让我先看看当前的实现细节，然后判断影响范围。</div>
+          <div class="tool-block">
+            <span class="tool-dot"></span>
+            read_file → src/middleware/auth.py
+          </div>
+          <div class="tool-block">
+            <span class="tool-dot"></span>
+            grep → "set_cookie.*token" 全局搜索
+          </div>
+          <p>分析完成。当前有 3 处直接在 cookie 写入明文 token，没有设 httpOnly 和 secure。重构方案：</p>
+          <ol>
+            <li>引入 Redis 作为 session store，token 加密后存服务端</li>
+            <li>Cookie 仅保存不可逆的 session ID，设置 httpOnly + secure + SameSite</li>
+            <li>增加 TTL 和自动续期逻辑</li>
+          </ol>
+          <div class="code">
+# session_store.py
+class RedisSessionStore:
+    def create(self, user_id: str, token: str) -> str:
+        sid = secrets.token_urlsafe(32)
+        payload = self._encrypt(token)
+        self.redis.setex(f"sess:{sid}", 3600, payload)
+        return sid
+
+    def get(self, session_id: str) -> str | None:
+        raw = self.redis.get(f"sess:{session_id}")
+        return self._decrypt(raw) if raw else None
+          </div>
+          <p>需要我直接在项目里创建这些文件吗？</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-wrap">
+      <div class="input-field">
+        <textarea placeholder="继续对话..."></textarea>
+        <button class="send-btn">↑</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <div class="rp-section">
+      <div class="rp-heading">会话信息</div>
+      <div class="stat-row"><span class="label">模型</span><span class="value">claude-sonnet-4-6</span></div>
+      <div class="stat-row"><span class="label">对话轮次</span><span class="value">6 turns</span></div>
+      <div class="stat-row"><span class="label">上下文</span><span class="value">72% 使用</span></div>
+      <div class="stat-row"><span class="label">缓存命中</span><span class="value">89%</span></div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-heading">工作记忆</div>
+      <div class="working-mem">
+        <span class="wm-chip highlight">auth-refactor</span>
+        <span class="wm-chip highlight">compliance</span>
+        <span class="wm-chip">redis</span>
+        <span class="wm-chip">session-mgmt</span>
+        <span class="wm-chip">cookie-security</span>
+      </div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-heading">执行时间线</div>
+      <div class="timeline">
+        <div class="tl-item">14:32 会话开始</div>
+        <div class="tl-item">14:32 read_file 48ms</div>
+        <div class="tl-item">14:33 grep 132ms</div>
+        <div class="tl-item">14:33 分析完成</div>
+        <div class="tl-item current">14:34 等待用户确认</div>
+      </div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

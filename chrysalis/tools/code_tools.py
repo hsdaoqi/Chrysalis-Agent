@@ -2,6 +2,7 @@
 
 import ast
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -104,16 +105,37 @@ def _run_shell(command: str, shell_type: str, timeout: int, cwd: str | None, wor
         cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
 
     try:
-        proc = subprocess.run(cmd, cwd=str(base), capture_output=True, text=True, timeout=timeout)
+        proc = subprocess.run(cmd, cwd=str(base), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"shell 命令执行超时: {timeout} 秒"}
 
     return {
         "ok": proc.returncode == 0,
         "exit_code": proc.returncode,
-        "stdout": proc.stdout.strip()[:20_000],
-        "stderr": proc.stderr.strip()[:5_000],
+        "stdout": _decode_process_output(proc.stdout).strip()[:20_000],
+        "stderr": _decode_process_output(proc.stderr).strip()[:5_000],
     }
+
+
+def _decode_process_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    encodings = ["utf-8", "gbk", "cp936", locale.getpreferredencoding(False), "mbcs"]
+    seen: set[str] = set()
+    for encoding in encodings:
+        if not encoding:
+            continue
+        normalized = encoding.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            return value.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return value.decode("utf-8", errors="replace")
 
 
 def _parse_last_json_line(text: str) -> dict | None:

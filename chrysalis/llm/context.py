@@ -206,6 +206,11 @@ class CompactionManager:
             repair_tool_pairs(history)
 
         # 最后的保险丝：超过 hard 时，牺牲最旧内容来保证请求能发出去。
+        if estimate_request_cost(history, system=system, tools=tools) > self.hard_budget_chars:
+            dropped = drop_non_a_messages(history)
+            if dropped:
+                stats.notes.append(f"dropped {dropped} non-A compact messages ({reason})")
+
         while len(history) > 3 and estimate_request_cost(history, system=system, tools=tools) > self.hard_budget_chars:
             drop_oldest_turn(history)
             repair_tool_pairs(history)
@@ -302,7 +307,13 @@ class CompactionManager:
         repair_tool_pairs(history)
 
         # 如果仍然过大，按硬限制的 75% 继续丢弃最旧内容，保证重试成功率。
-        while len(history) > 3 and estimate_request_cost(history) > max(1, int(self.hard_budget_chars * 0.75)):
+        reactive_limit = max(1, int(self.hard_budget_chars * 0.75))
+        if estimate_request_cost(history) > reactive_limit:
+            dropped = drop_non_a_messages(history, keep_recent_turns=_REACTIVE_KEEP_RECENT_TURNS)
+            if dropped:
+                stats.notes.append(f"dropped {dropped} non-A compact messages ({reason})")
+
+        while len(history) > 3 and estimate_request_cost(history) > reactive_limit:
             drop_oldest_turn(history)
             repair_tool_pairs(history)
 
@@ -383,6 +394,8 @@ def trim_messages_history(history: list[dict], context_window: int) -> None:
         snip_compact_history(history)
         full_compact_history(history, target_chars=soft_budget)
         repair_tool_pairs(history)
+    if estimate_context_cost(history) > budget:
+        drop_non_a_messages(history)
     while len(history) > 3 and estimate_context_cost(history) > budget:
         drop_oldest_turn(history)
         repair_tool_pairs(history)
@@ -420,7 +433,8 @@ def microcompact_history(
 
     # 从后往前记录工具输出 hash：更旧的重复内容会被替换成一句提示。
     seen_tool_hashes: set[str] = set()
-    for msg in reversed(history):
+    for idx in range(len(history) - 1, -1, -1):
+        msg = history[idx]
         for block in msg.get("blocks", []):
             if not isinstance(block, dict) or block.get("type") != "tool_result":
                 continue
@@ -428,7 +442,8 @@ def microcompact_history(
             if not isinstance(content, str) or len(content) < _MIN_TOOL_RESULT_PRUNE_CHARS:
                 continue
             digest = hashlib.md5(content.encode("utf-8", errors="replace")).hexdigest()[:12]
-            if digest in seen_tool_hashes and not block.get("_duplicate_pruned"):
+            protected_tail = idx >= protect_from and not force
+            if not protected_tail and digest in seen_tool_hashes and not block.get("_duplicate_pruned"):
                 block["content"] = "[Duplicate tool output: same content as a more recent call]"
                 block["_duplicate_pruned"] = True
                 block[_COMPACT_LEVEL_KEY] = _LEVEL_MICRO
@@ -543,6 +558,36 @@ def full_compact_history(
     history[:] = history[:start] + [d_msg] + history[end:]
     repair_tool_pairs(history)
     return True
+
+
+def drop_non_a_messages(history: list[dict], keep_recent_turns: int | None = None) -> int:
+    """Drop compacted B/C/D messages in one cache reset.
+
+    A is the raw layer. The final fallback should not peel compacted layers one
+    message at a time, because that creates a different prompt-cache prefix on
+    each subsequent request. Reactive compaction may mark the live tail as B, so
+    callers can protect recent turns when they need to preserve the current task.
+    """
+
+    if not history:
+        return 0
+
+    protected_from = len(history)
+    if keep_recent_turns is not None and keep_recent_turns > 0:
+        protected_from = _protected_tail_start(history, keep_recent_turns)
+
+    kept: list[dict] = []
+    dropped = 0
+    for idx, msg in enumerate(history):
+        if idx >= protected_from or _compact_level(msg) == _LEVEL_RAW:
+            kept.append(msg)
+        else:
+            dropped += 1
+
+    if dropped:
+        history[:] = kept
+        repair_tool_pairs(history)
+    return dropped
 
 
 def drop_oldest_turn(history: list[dict]) -> None:

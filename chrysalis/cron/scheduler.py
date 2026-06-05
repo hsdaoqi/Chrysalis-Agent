@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import locale
 import os
 import subprocess
 import sys
@@ -282,18 +283,40 @@ def _run_job_script(config: AgentConfig, script_path: str, workdir: str | None =
         proc = subprocess.run(
             argv,
             cwd=str(cwd),
-            text=True,
             capture_output=True,
             timeout=int(os.getenv("CHRYSALIS_CRON_SCRIPT_TIMEOUT", DEFAULT_SCRIPT_TIMEOUT)),
         )
     except subprocess.TimeoutExpired as exc:
         return False, f"script timed out: {exc}"
-    output = (proc.stdout or "").strip()
-    if proc.stderr:
-        output = (output + "\n\n[stderr]\n" + proc.stderr.strip()).strip()
+    stdout = _decode_process_output(proc.stdout)
+    stderr = _decode_process_output(proc.stderr)
+    output = stdout.strip()
+    if stderr:
+        output = (output + "\n\n[stderr]\n" + stderr.strip()).strip()
     if proc.returncode != 0:
         return False, output or f"script exited with code {proc.returncode}"
     return True, output
+
+
+def _decode_process_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    encodings = ["utf-8", "gbk", "cp936", locale.getpreferredencoding(False), "mbcs"]
+    seen: set[str] = set()
+    for encoding in encodings:
+        if not encoding:
+            continue
+        normalized = encoding.lower()
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        try:
+            return value.decode(encoding)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return value.decode("utf-8", errors="replace")
 
 
 def _wake_agent_enabled(output: str) -> bool:

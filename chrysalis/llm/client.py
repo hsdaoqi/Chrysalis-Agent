@@ -7,8 +7,11 @@
 - 跟踪 pending tool_use IDs，缺失的工具结果用空字符串补齐（避免协议级断裂）
 """
 
+import copy
 import json
 import threading
+import time
+import uuid
 from typing import Callable, Generator
 
 from chrysalis.llm.logger import write_llm_log
@@ -31,7 +34,9 @@ class LLMClient:
         self._pending_tool_ids: list[str] = []
         self.tracker = tracker or UsageTracker()
         self._on_history_changed = on_history_changed
+        self.on_trace_event: Callable[[dict], None] | None = None
         self._cancel_event = threading.Event()
+        self._last_context_budget: dict = {}
 
     @property
     def history(self) -> list[dict]:
@@ -43,11 +48,15 @@ class LLMClient:
     def set_tools(self, tools: list[dict]) -> None:
         self.session.tools = tools
 
+    def set_context_budget(self, budget: dict) -> None:
+        self._last_context_budget = copy.deepcopy(budget) if isinstance(budget, dict) else {}
+
     def chat(
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
         cancel_event: threading.Event | None = None,
+        turn: int | None = None,
     ) -> Generator[str, None, Response]:
         """处理 agent_loop 传来的 messages，调用 LLM，流式返回。
 
@@ -71,6 +80,10 @@ class LLMClient:
         canonical_message = self._merge_user_message(messages)
         write_llm_log("Prompt", json.dumps(canonical_message, ensure_ascii=False, indent=2, default=str))
 
+        call_id = uuid.uuid4().hex
+        started = time.perf_counter()
+        self._emit_trace("llm_start", self._llm_trace_start_payload(call_id, canonical_message, turn))
+
         gen = self.session.ask(canonical_message, cancel_event=cancel)
         response: Response | None = None
         try:
@@ -86,9 +99,11 @@ class LLMClient:
             response = Response(content="!!!Error: 未收到响应", raw="")
 
         if response.cancelled:
+            self._emit_trace("llm_complete", self._llm_trace_complete_payload(call_id, response, started, turn))
             return response
 
         self.tracker.record_turn(response.usage)
+        self._emit_trace("llm_complete", self._llm_trace_complete_payload(call_id, response, started, turn))
 
         write_llm_log("Response", response.raw or response.content)
 
@@ -159,7 +174,84 @@ class LLMClient:
                 })
         self._pending_tool_ids = []
 
-        return {"role": "user", "blocks": tool_result_blocks + image_blocks + text_blocks}
+        merged = {"role": "user", "blocks": tool_result_blocks + image_blocks + text_blocks}
+        meta = self._merge_message_meta(messages)
+        if meta:
+            merged["meta"] = meta
+        return merged
+
+    def _merge_message_meta(self, messages: list[dict]) -> dict:
+        for msg in messages:
+            if msg.get("role") == "system":
+                continue
+            meta = msg.get("meta")
+            if isinstance(meta, dict) and meta:
+                return dict(meta)
+        return {}
+
+    def _emit_trace(self, kind: str, payload: dict) -> None:
+        if self.on_trace_event is None:
+            return
+        try:
+            self.on_trace_event({"kind": kind, **payload})
+        except Exception:
+            pass
+
+    def _llm_trace_start_payload(self, call_id: str, canonical_message: dict, turn: int | None = None) -> dict:
+        session = self._active_session()
+        history = list(getattr(session, "history", []) or [])
+        system = getattr(session, "system", "") or ""
+        tools = getattr(session, "tools", None)
+        config = session.config
+        chars = estimate_request_cost(history + [canonical_message], system=system, tools=tools)
+        blocks: dict[str, int] = {}
+        for block in canonical_message.get("blocks", []):
+            if isinstance(block, dict):
+                block_type = str(block.get("type") or "unknown")
+                blocks[block_type] = blocks.get(block_type, 0) + 1
+        payload = {
+            "call_id": call_id,
+            "model": config.name or config.model,
+            "model_id": config.model,
+            "protocol": config.protocol,
+            "context": {
+                "chars": chars,
+                "tokens_estimate": max(1, chars // 3),
+                "context_window": config.context_window,
+                "messages": len(history) + 1,
+                "blocks": blocks,
+                "tools": len(tools or []),
+            },
+        }
+        if turn and turn > 0:
+            payload["turn"] = turn
+        return payload
+
+    def _llm_trace_complete_payload(self, call_id: str, response: Response, started: float, turn: int | None = None) -> dict:
+        session = self._active_session()
+        config = session.config
+        usage = response.usage.to_dict()
+        cost = self.tracker.estimate_cost(response.usage, config.name or config.model)
+        payload = {
+            "call_id": call_id,
+            "model": config.name or config.model,
+            "model_id": config.model,
+            "protocol": config.protocol,
+            "stop_reason": response.stop_reason,
+            "cancelled": bool(response.cancelled),
+            "is_error": bool(response.is_error),
+            "elapsed_ms": max(0, int((time.perf_counter() - started) * 1000)),
+            "usage": usage,
+            "cost": round(cost, 6),
+            "tool_calls": [
+                {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                for tc in response.tool_calls
+            ],
+            "content_preview": response.content[:240],
+        }
+        if turn and turn > 0:
+            payload["turn"] = turn
+        return payload
 
     @property
     def last_usage(self) -> Usage:
@@ -198,7 +290,7 @@ class LLMClient:
                     block_counts[btype] = block_counts.get(btype, 0) + 1
 
         stats = getattr(compaction, "last_stats", None)
-        return {
+        result = {
             "chars": chars,
             "tokens_estimate": max(1, chars // 3),
             "budget_chars": budget_chars,
@@ -221,6 +313,9 @@ class LLMClient:
                 "tool_results_archived": int(getattr(stats, "tool_results_archived", 0)),
             },
         }
+        if self._last_context_budget:
+            result["assembly"] = copy.deepcopy(self._last_context_budget)
+        return result
 
     def _active_session(self) -> BaseSession:
         session = self.session

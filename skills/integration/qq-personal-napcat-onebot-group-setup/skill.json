@@ -1,0 +1,23 @@
+{
+  "id": "integration.qq-personal-napcat-onebot-group-setup",
+  "name": "qq-personal-napcat-onebot-group-setup",
+  "title": "qq-personal-napcat-onebot-group-setup",
+  "description": "当官方 QQ bot 不能入群时，用 NapCat 登录个人 QQ 并配置 OneBot v11 WebSocket 3001，供 Chrysalis qq_personal 网关连接。包含启动命令、token 定位、配置文件和避坑。",
+  "category": "integration",
+  "tags": [],
+  "status": "active",
+  "version": "1.0.0",
+  "created_at": "2026-06-02T13:30:37",
+  "updated_at": "2026-06-05T21:04:38",
+  "stats": {
+    "uses": 127,
+    "successes": 0,
+    "failures": 0,
+    "matches": 127,
+    "views": 3,
+    "last_used_at": "2026-06-05T20:30:20",
+    "last_matched_at": "2026-06-05T20:30:20",
+    "last_viewed_at": "2026-06-05T21:04:38"
+  },
+  "pinned": false
+}

@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chrysalis - Neo Brutalist</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #f5f0e8;
+  --ink: #1a1a1a;
+  --accent: #ff4d00;
+  --accent2: #0047ff;
+  --border: 3px solid var(--ink);
+}
+
+body {
+  font-family: 'Space Mono', monospace;
+  background: var(--bg);
+  color: var(--ink);
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr 300px;
+  grid-template-rows: 60px 1fr 72px;
+  height: 100vh;
+  border: var(--border);
+}
+
+/* Header */
+.header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  border-bottom: var(--border);
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.logo {
+  font-family: 'Syne', sans-serif;
+  font-weight: 800;
+  font-size: 22px;
+  letter-spacing: -1px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.logo-icon {
+  width: 32px;
+  height: 32px;
+  background: var(--accent);
+  clip-path: polygon(50% 0%, 100% 38%, 82% 100%, 18% 100%, 0% 38%);
+}
+
+.header-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.header-actions button {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  padding: 6px 14px;
+  border: 2px solid var(--bg);
+  background: transparent;
+  color: var(--bg);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.1s;
+}
+
+.header-actions button:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--ink);
+}
+
+/* Sidebar */
+.sidebar {
+  border-right: var(--border);
+  overflow-y: auto;
+  padding: 16px;
+}
+
+.sidebar h3 {
+  font-family: 'Syne', sans-serif;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+
+.session-item {
+  padding: 12px;
+  margin-bottom: 8px;
+  border: 2px solid var(--ink);
+  cursor: pointer;
+  transition: all 0.1s;
+  position: relative;
+}
+
+.session-item:hover {
+  transform: translate(-3px, -3px);
+  box-shadow: 3px 3px 0 var(--ink);
+}
+
+.session-item.active {
+  background: var(--accent);
+  color: white;
+}
+
+.session-item .title {
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.session-item .meta {
+  font-size: 10px;
+  opacity: 0.6;
+}
+
+/* Chat Area */
+.chat-area {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.message {
+  margin-bottom: 20px;
+  max-width: 85%;
+}
+
+.message.user {
+  margin-left: auto;
+}
+
+.message-header {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.message.user .message-header { color: var(--accent2); }
+.message.agent .message-header { color: var(--accent); }
+
+.message-body {
+  padding: 16px;
+  border: var(--border);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.message.user .message-body {
+  background: var(--accent2);
+  color: white;
+  border-color: var(--accent2);
+}
+
+.message.agent .message-body {
+  background: white;
+}
+
+.tool-call {
+  margin-top: 12px;
+  padding: 12px;
+  background: var(--bg);
+  border: 2px dashed var(--ink);
+  font-size: 11px;
+}
+
+.tool-call .tool-name {
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+/* Input */
+.input-area {
+  grid-column: 2 / 3;
+  border-top: var(--border);
+  padding: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.input-area textarea {
+  flex: 1;
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  padding: 12px 16px;
+  border: var(--border);
+  background: white;
+  resize: none;
+  height: 40px;
+  outline: none;
+}
+
+.input-area textarea:focus {
+  box-shadow: 4px 4px 0 var(--accent);
+  transform: translate(-2px, -2px);
+}
+
+.send-btn {
+  width: 44px;
+  height: 44px;
+  background: var(--accent);
+  border: var(--border);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.1s;
+}
+
+.send-btn:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.send-btn::after {
+  content: '→';
+  font-size: 20px;
+  font-weight: 700;
+}
+
+/* Right Panel */
+.right-panel {
+  border-left: var(--border);
+  padding: 16px;
+  overflow-y: auto;
+}
+
+.right-panel h3 {
+  font-family: 'Syne', sans-serif;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.memory-tag {
+  display: inline-block;
+  padding: 4px 10px;
+  border: 2px solid var(--ink);
+  font-size: 10px;
+  margin: 0 4px 6px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.memory-tag.active {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.status-block {
+  margin-top: 20px;
+  padding: 12px;
+  border: var(--border);
+  font-size: 11px;
+}
+
+.status-block .label {
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--accent2);
+}
+
+.skill-list {
+  margin-top: 20px;
+}
+
+.skill-item {
+  padding: 8px 12px;
+  border: 2px solid var(--ink);
+  margin-bottom: 6px;
+  font-size: 11px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.skill-item .dot {
+  width: 8px;
+  height: 8px;
+  background: #00c853;
+  border-radius: 50%;
+}
+
+/* Footer area for right and left panels */
+.sidebar-footer {
+  grid-column: 1;
+  grid-row: 3;
+  border-right: var(--border);
+  border-top: var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+}
+
+.right-footer {
+  grid-column: 3;
+  grid-row: 3;
+  border-left: var(--border);
+  border-top: var(--border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  font-size: 10px;
+  gap: 8px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  background: #00c853;
+  border-radius: 50%;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="logo">
+      <div class="logo-icon"></div>
+      CHRYSALIS
+    </div>
+    <div class="header-actions">
+      <button>新建会话</button>
+      <button>设置</button>
+      <button>权限: Balanced</button>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <h3>会话列表</h3>
+    <div class="session-item active">
+      <div class="title">重构认证模块</div>
+      <div class="meta">今天 14:32 · 12 轮对话</div>
+    </div>
+    <div class="session-item">
+      <div class="title">优化数据库查询</div>
+      <div class="meta">昨天 · 8 轮对话</div>
+    </div>
+    <div class="session-item">
+      <div class="title">部署脚本编写</div>
+      <div class="meta">2天前 · 23 轮对话</div>
+    </div>
+    <div class="session-item">
+      <div class="title">API 接口设计</div>
+      <div class="meta">3天前 · 6 轮对话</div>
+    </div>
+    <div class="session-item">
+      <div class="title">日志系统接入</div>
+      <div class="meta">上周 · 15 轮对话</div>
+    </div>
+  </div>
+
+  <div class="chat-area">
+    <div class="messages">
+      <div class="message user">
+        <div class="message-header">你</div>
+        <div class="message-body">帮我重构 auth middleware，把 session token 的存储方式改成符合新合规要求的方案</div>
+      </div>
+      <div class="message agent">
+        <div class="message-header">Chrysalis</div>
+        <div class="message-body">
+          我来看看当前的认证中间件结构，然后提出重构方案。
+          <div class="tool-call">
+            <div class="tool-name">↗ read_file</div>
+            src/middleware/auth.py — 读取当前实现
+          </div>
+          <div class="tool-call">
+            <div class="tool-name">↗ grep</div>
+            搜索 session_token 在项目中的所有引用
+          </div>
+        </div>
+      </div>
+      <div class="message agent">
+        <div class="message-header">Chrysalis</div>
+        <div class="message-body">
+          分析完成。当前方案将 token 明文存在 cookie 中，违反了新合规要求。建议改为：<br><br>
+          1. 使用 httpOnly + secure cookie 存储加密后的 session ID<br>
+          2. 实际 token 存入服务端 Redis，设置 TTL<br>
+          3. 每次请求通过 session ID 从 Redis 获取实际 token<br><br>
+          需要我开始实现吗？
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <h3>工作记忆</h3>
+    <div class="memory-tag active">auth-refactor</div>
+    <div class="memory-tag">compliance</div>
+    <div class="memory-tag active">session-mgmt</div>
+    <div class="memory-tag">redis</div>
+
+    <div class="status-block">
+      <div class="label">当前模型</div>
+      claude-sonnet-4-6 · 上下文 72%
+    </div>
+
+    <div class="status-block">
+      <div class="label">Token 用量</div>
+      输入 12,847 · 输出 3,215 · 缓存命中 89%
+    </div>
+
+    <h3 style="margin-top: 20px;">活跃技能</h3>
+    <div class="skill-list">
+      <div class="skill-item"><span>code-review</span><span class="dot"></span></div>
+      <div class="skill-item"><span>security-audit</span><span class="dot"></span></div>
+      <div class="skill-item"><span>refactor-plan</span><span class="dot"></span></div>
+    </div>
+  </div>
+
+  <div class="sidebar-footer">
+    <span style="font-size:10px; text-transform:uppercase; letter-spacing:1px;">5 sessions</span>
+  </div>
+
+  <div class="input-area">
+    <textarea placeholder="输入消息... (Ctrl+Enter 发送)"></textarea>
+    <div class="send-btn"></div>
+  </div>
+
+  <div class="right-footer">
+    <span class="status-dot"></span>
+    <span>Agent 就绪</span>
+  </div>
+</div>
+</body>
+</html>

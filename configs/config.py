@@ -3,13 +3,23 @@
 import json
 import os
 import re
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+def _detect_project_root() -> Path:
+    override = os.getenv("CHRYSALIS_PROJECT_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parent.parent
+
+
+PROJECT_ROOT = _detect_project_root()
 load_dotenv(PROJECT_ROOT / ".env")
 
 
@@ -21,12 +31,25 @@ def project_path(path: str | Path) -> Path:
     return (PROJECT_ROOT / value).resolve()
 
 
+def _to_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    return _to_bool(os.getenv(name), default)
+
+
 @dataclass
 class LLMConfig:
     provider: str = field(default_factory=lambda: os.getenv("CHRYSALIS_LLM_PROVIDER", "deepseek"))
     api_key: str = field(default_factory=lambda: os.getenv("CHRYSALIS_API_KEY", ""))
     base_url: str = field(default_factory=lambda: os.getenv("CHRYSALIS_BASE_URL", ""))
     model: str = field(default_factory=lambda: os.getenv("CHRYSALIS_MODEL", ""))
+    wire_api: str = field(default_factory=lambda: os.getenv("CHRYSALIS_WIRE_API", "chat"))
     temperature: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_TEMPERATURE", "0.2")))
     max_tokens: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MAX_TOKENS", "4096")))
     timeout: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_API_TIMEOUT", "60")))
@@ -37,6 +60,7 @@ class LLMConfig:
     output_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_OUTPUT_PRICE", "0")))
     cache_read_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_READ_PRICE", "0")))
     cache_write_price: float = field(default_factory=lambda: float(os.getenv("CHRYSALIS_CACHE_WRITE_PRICE", "0")))
+    prompt_cache_enabled: bool = field(default_factory=lambda: _env_bool("CHRYSALIS_PROMPT_CACHE_ENABLED", True))
 
     def __post_init__(self) -> None:
         provider = self.provider.strip().lower()
@@ -64,6 +88,7 @@ class LLMConfig:
             base_url=self.base_url,
             model=self.model,
             protocol=protocol,
+            wire_api=self.wire_api,
             context_window=self.context_window,
             temperature=self.temperature,
             max_tokens=self.max_tokens,
@@ -71,6 +96,7 @@ class LLMConfig:
             read_timeout=int(self.timeout),
             proxy=self.proxy or None,
             name=self.model,
+            prompt_cache_enabled=self.prompt_cache_enabled,
         )
 
     def pricing_dict(self) -> dict[str, float] | None:
@@ -156,6 +182,7 @@ class AgentConfig:
                 base_url=base_url,
                 model=model,
                 protocol=protocol,
+                wire_api=entry.get("wire_api", "chat"),
                 context_window=int(entry.get("context_window", 28000)),
                 temperature=float(entry.get("temperature", 0.2)),
                 max_tokens=int(entry.get("max_tokens", 4096)) if entry.get("max_tokens") else None,
@@ -166,6 +193,7 @@ class AgentConfig:
                 thinking=entry.get("thinking", "disabled"),
                 thinking_budget=int(entry.get("thinking_budget")) if entry.get("thinking_budget") else None,
                 name=entry.get("name") or model,
+                prompt_cache_enabled=_to_bool(entry.get("prompt_cache_enabled"), True),
             ))
         return configs
 
@@ -192,6 +220,7 @@ class AgentConfig:
             base_url=llm.get("base_url", ""),
             model=model,
             protocol=protocol,
+            wire_api=llm.get("wire_api", "chat"),
             context_window=int(llm.get("context_window", 28000)),
             temperature=float(llm.get("temperature", 0.2)),
             max_tokens=int(llm.get("max_tokens", 4096)) if llm.get("max_tokens") else None,
@@ -202,6 +231,7 @@ class AgentConfig:
             thinking=llm.get("thinking", "disabled"),
             thinking_budget=int(llm.get("thinking_budget")) if llm.get("thinking_budget") else None,
             name=llm.get("name") or model,
+            prompt_cache_enabled=_to_bool(llm.get("prompt_cache_enabled"), True),
         )
 
 

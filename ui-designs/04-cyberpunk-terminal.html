@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chrysalis - Cyberpunk Terminal</title>
+<link href="https://fonts.googleapis.com/css2?family=Victor+Mono:wght@300;400;500;700&family=Chakra+Petch:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0d0d0f;
+  --bg-panel: #111114;
+  --bg-elevated: #18181c;
+  --neon-green: #39ff14;
+  --neon-cyan: #00fff7;
+  --neon-pink: #ff006e;
+  --neon-yellow: #ffe600;
+  --text: #c8c8d0;
+  --text-dim: #555566;
+  --border: #222233;
+}
+
+body {
+  font-family: 'Victor Mono', monospace;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* Scanline effect */
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0,0,0,0.03) 2px,
+    rgba(0,0,0,0.03) 4px
+  );
+  pointer-events: none;
+  z-index: 100;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 220px 1fr 240px;
+  grid-template-rows: 48px 1fr 44px;
+  height: 100vh;
+  gap: 1px;
+  background: var(--border);
+}
+
+/* Header */
+.header {
+  grid-column: 1 / -1;
+  background: var(--bg-panel);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.logo-glyph {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--neon-green);
+  transform: rotate(45deg);
+  position: relative;
+  box-shadow: 0 0 8px var(--neon-green), inset 0 0 8px rgba(57,255,20,0.1);
+}
+
+.logo-glyph::after {
+  content: '';
+  position: absolute;
+  inset: 4px;
+  border: 1px solid var(--neon-green);
+  opacity: 0.5;
+}
+
+.logo-text {
+  font-family: 'Chakra Petch', sans-serif;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 4px;
+  text-transform: uppercase;
+  color: var(--neon-green);
+  text-shadow: 0 0 10px var(--neon-green);
+}
+
+.header-stats {
+  display: flex;
+  gap: 20px;
+  font-size: 11px;
+}
+
+.h-stat {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.h-stat .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  animation: blink 2s infinite;
+}
+
+.h-stat .dot.green { background: var(--neon-green); box-shadow: 0 0 6px var(--neon-green); }
+.h-stat .dot.cyan { background: var(--neon-cyan); box-shadow: 0 0 6px var(--neon-cyan); }
+.h-stat .dot.pink { background: var(--neon-pink); box-shadow: 0 0 6px var(--neon-pink); }
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.header-right {
+  display: flex;
+  gap: 8px;
+}
+
+.h-btn {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  transition: all 0.2s;
+}
+
+.h-btn:hover {
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  box-shadow: 0 0 8px rgba(0,255,247,0.2);
+}
+
+/* Sidebar */
+.sidebar {
+  background: var(--bg-panel);
+  padding: 12px 8px;
+  overflow-y: auto;
+}
+
+.s-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--neon-cyan);
+  padding: 8px 10px 6px;
+  text-shadow: 0 0 4px var(--neon-cyan);
+}
+
+.s-item {
+  padding: 8px 10px;
+  margin-bottom: 2px;
+  cursor: pointer;
+  border-left: 2px solid transparent;
+  transition: all 0.15s;
+  font-size: 11px;
+}
+
+.s-item:hover {
+  background: var(--bg-elevated);
+  border-left-color: var(--text-dim);
+}
+
+.s-item.active {
+  background: var(--bg-elevated);
+  border-left-color: var(--neon-green);
+  color: var(--neon-green);
+}
+
+.s-item .s-time {
+  font-size: 9px;
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+
+/* Main */
+.main {
+  background: var(--bg-panel);
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* Terminal-style header */
+.term-header {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.term-header .path {
+  color: var(--neon-cyan);
+}
+
+.term-header .branch {
+  color: var(--neon-pink);
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.msg {
+  margin-bottom: 20px;
+  padding-left: 12px;
+  border-left: 1px solid var(--border);
+}
+
+.msg.user { border-left-color: var(--neon-cyan); }
+.msg.agent { border-left-color: var(--neon-green); }
+
+.msg-prefix {
+  font-size: 10px;
+  margin-bottom: 4px;
+  font-family: 'Chakra Petch', sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.msg.user .msg-prefix { color: var(--neon-cyan); text-shadow: 0 0 4px var(--neon-cyan); }
+.msg.agent .msg-prefix { color: var(--neon-green); text-shadow: 0 0 4px var(--neon-green); }
+
+.msg-text {
+  color: var(--text);
+}
+
+.tool-line {
+  margin: 8px 0;
+  padding: 6px 12px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.tool-line .arrow {
+  color: var(--neon-yellow);
+}
+
+.tool-line .name {
+  color: var(--neon-pink);
+}
+
+.tool-line .args {
+  color: var(--text-dim);
+}
+
+.tool-line .duration {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 10px;
+}
+
+.code-output {
+  margin: 8px 0;
+  padding: 12px;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.code-output .kw { color: var(--neon-pink); }
+.code-output .fn { color: var(--neon-cyan); }
+.code-output .str { color: var(--neon-green); }
+.code-output .num { color: var(--neon-yellow); }
+.code-output .cmt { color: var(--text-dim); font-style: italic; }
+
+.msg-list {
+  padding-left: 16px;
+  margin: 6px 0;
+}
+
+.msg-list li {
+  margin-bottom: 4px;
+  list-style: none;
+  position: relative;
+  padding-left: 12px;
+}
+
+.msg-list li::before {
+  content: '›';
+  position: absolute;
+  left: 0;
+  color: var(--neon-green);
+}
+
+/* Input */
+.input-area {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.prompt-char {
+  color: var(--neon-green);
+  font-size: 14px;
+  font-weight: 700;
+  text-shadow: 0 0 6px var(--neon-green);
+}
+
+.input-area input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: 'Victor Mono', monospace;
+  font-size: 13px;
+  color: var(--text);
+  caret-color: var(--neon-green);
+}
+
+.input-area input::placeholder { color: var(--text-dim); }
+
+.input-hint {
+  font-size: 9px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+/* Right Panel */
+.right-panel {
+  background: var(--bg-panel);
+  padding: 12px 10px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+
+.rp-label {
+  font-family: 'Chakra Petch', sans-serif;
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  color: var(--neon-pink);
+  margin-bottom: 8px;
+  text-shadow: 0 0 4px var(--neon-pink);
+  padding-top: 8px;
+}
+
+.rp-bar {
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  margin-bottom: 6px;
+  overflow: hidden;
+}
+
+.rp-bar .fill {
+  height: 100%;
+  border-radius: 2px;
+}
+
+.rp-bar .fill.green {
+  background: var(--neon-green);
+  box-shadow: 0 0 8px var(--neon-green);
+}
+
+.rp-bar .fill.cyan {
+  background: var(--neon-cyan);
+  box-shadow: 0 0 8px var(--neon-cyan);
+}
+
+.rp-value {
+  font-size: 10px;
+  color: var(--text-dim);
+  margin-bottom: 16px;
+}
+
+.mem-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 16px;
+}
+
+.mem-tag {
+  padding: 2px 8px;
+  font-size: 10px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+
+.mem-tag.hot {
+  border-color: var(--neon-yellow);
+  color: var(--neon-yellow);
+  box-shadow: 0 0 4px rgba(255,230,0,0.1);
+}
+
+.process-list {
+  margin-bottom: 16px;
+}
+
+.proc-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0;
+  font-size: 10px;
+}
+
+.proc-item .p-status {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+}
+
+.proc-item .p-status.run { background: var(--neon-green); }
+.proc-item .p-status.idle { background: var(--text-dim); }
+.proc-item .p-status.wait { background: var(--neon-yellow); }
+
+.proc-item .p-name { color: var(--text); }
+.proc-item .p-info { margin-left: auto; color: var(--text-dim); }
+
+/* Footer */
+.footer {
+  grid-column: 1 / -1;
+  background: var(--bg-panel);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.footer-left {
+  display: flex;
+  gap: 16px;
+}
+
+.footer-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--neon-green);
+  box-shadow: 0 0 6px var(--neon-green);
+  animation: blink 1.5s infinite;
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="header">
+    <div class="logo-area">
+      <div class="logo-glyph"></div>
+      <span class="logo-text">Chrysalis</span>
+    </div>
+    <div class="header-stats">
+      <div class="h-stat"><span class="dot green"></span>Agent Online</div>
+      <div class="h-stat"><span class="dot cyan"></span>Model: sonnet-4-6</div>
+      <div class="h-stat"><span class="dot pink"></span>Permission: balanced</div>
+    </div>
+    <div class="header-right">
+      <button class="h-btn">config</button>
+      <button class="h-btn">memory</button>
+      <button class="h-btn">skills</button>
+    </div>
+  </div>
+
+  <div class="sidebar">
+    <div class="s-label">Sessions</div>
+    <div class="s-item active">
+      认证模块重构
+      <div class="s-time">now · active</div>
+    </div>
+    <div class="s-item">
+      DB 查询优化
+      <div class="s-time">2h ago</div>
+    </div>
+    <div class="s-item">
+      CI Pipeline 修复
+      <div class="s-time">yesterday</div>
+    </div>
+    <div class="s-item">
+      API 文档生成
+      <div class="s-time">2d ago</div>
+    </div>
+    <div class="s-item">
+      WebSocket 集成
+      <div class="s-time">3d ago</div>
+    </div>
+    <div class="s-label" style="margin-top:12px;">Pinned</div>
+    <div class="s-item">
+      项目架构笔记
+      <div class="s-time">ref</div>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="term-header">
+      <span>session://auth-refactor</span>
+      <span class="path">~/project/src</span>
+      <span class="branch">⎇ feat/auth-v2</span>
+    </div>
+
+    <div class="messages">
+      <div class="msg user">
+        <div class="msg-prefix">[user]</div>
+        <div class="msg-text">auth middleware 明文 token 存 cookie，不合规。改成服务端存储。</div>
+      </div>
+
+      <div class="msg agent">
+        <div class="msg-prefix">[chrysalis]</div>
+        <div class="msg-text">扫描当前实现。</div>
+        <div class="tool-line">
+          <span class="arrow">▸</span>
+          <span class="name">read_file</span>
+          <span class="args">src/middleware/auth.py</span>
+          <span class="duration">48ms ✓</span>
+        </div>
+        <div class="tool-line">
+          <span class="arrow">▸</span>
+          <span class="name">grep</span>
+          <span class="args">"set_cookie.*token" --recursive</span>
+          <span class="duration">132ms ✓</span>
+        </div>
+      </div>
+
+      <div class="msg agent">
+        <div class="msg-prefix">[chrysalis]</div>
+        <div class="msg-text">发现 3 处违规写入。重构方案：</div>
+        <ul class="msg-list">
+          <li>Redis session store，token AES-256 加密存服务端</li>
+          <li>Cookie 仅放 session_id (httpOnly + secure + SameSite=Strict)</li>
+          <li>TTL 3600s，sliding window 续期</li>
+        </ul>
+        <div class="code-output">
+<span class="kw">class</span> <span class="fn">RedisSessionStore</span>:
+    <span class="kw">def</span> <span class="fn">create</span>(self, user_id, token):
+        sid = secrets.<span class="fn">token_urlsafe</span>(<span class="num">32</span>)
+        encrypted = self.<span class="fn">_encrypt</span>(token)
+        self.redis.<span class="fn">setex</span>(<span class="str">f"sess:{sid}"</span>, <span class="num">3600</span>, encrypted)
+        <span class="kw">return</span> sid
+
+    <span class="kw">def</span> <span class="fn">validate</span>(self, session_id):
+        raw = self.redis.<span class="fn">get</span>(<span class="str">f"sess:{session_id}"</span>)
+        <span class="kw">if</span> <span class="kw">not</span> raw:
+            <span class="kw">return</span> <span class="kw">None</span>
+        self.redis.<span class="fn">expire</span>(<span class="str">f"sess:{session_id}"</span>, <span class="num">3600</span>)  <span class="cmt"># sliding window</span>
+        <span class="kw">return</span> self.<span class="fn">_decrypt</span>(raw)
+        </div>
+        <div class="msg-text" style="margin-top:8px;">执行写入？等待确认。</div>
+      </div>
+    </div>
+
+    <div class="input-area">
+      <span class="prompt-char">❯</span>
+      <input type="text" placeholder="输入指令...">
+      <span class="input-hint">Ctrl+Enter 发送</span>
+    </div>
+  </div>
+
+  <div class="right-panel">
+    <div class="rp-label">Context</div>
+    <div class="rp-bar"><div class="fill green" style="width:72%"></div></div>
+    <div class="rp-value">144K / 200K tokens</div>
+
+    <div class="rp-label">Cache Hit</div>
+    <div class="rp-bar"><div class="fill cyan" style="width:89%"></div></div>
+    <div class="rp-value">89% — 高效</div>
+
+    <div class="rp-label">Working Memory</div>
+    <div class="mem-tags">
+      <span class="mem-tag hot">auth</span>
+      <span class="mem-tag hot">compliance</span>
+      <span class="mem-tag">redis</span>
+      <span class="mem-tag">session</span>
+      <span class="mem-tag">cookie</span>
+      <span class="mem-tag hot">security</span>
+    </div>
+
+    <div class="rp-label">Processes</div>
+    <div class="process-list">
+      <div class="proc-item"><span class="p-status run"></span><span class="p-name">kernel</span><span class="p-info">active</span></div>
+      <div class="proc-item"><span class="p-status run"></span><span class="p-name">tool_registry</span><span class="p-info">12 tools</span></div>
+      <div class="proc-item"><span class="p-status wait"></span><span class="p-name">permission_gate</span><span class="p-info">awaiting</span></div>
+      <div class="proc-item"><span class="p-status idle"></span><span class="p-name">memory_daemon</span><span class="p-info">idle</span></div>
+      <div class="proc-item"><span class="p-status idle"></span><span class="p-name">skill_matcher</span><span class="p-info">standby</span></div>
+    </div>
+
+    <div class="rp-label">Token Usage</div>
+    <div class="process-list">
+      <div class="proc-item"><span class="p-name">input</span><span class="p-info">14,832</span></div>
+      <div class="proc-item"><span class="p-name">output</span><span class="p-info">4,291</span></div>
+      <div class="proc-item"><span class="p-name">total</span><span class="p-info">19,123</span></div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-left">
+      <span>PID: 8472</span>
+      <span>uptime: 1h 23m</span>
+      <span>tools: 12 loaded</span>
+    </div>
+    <div class="footer-right">
+      <span class="live-dot"></span>
+      <span>AGENT READY</span>
+    </div>
+  </div>
+</div>
+</body>
+</html>

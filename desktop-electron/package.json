@@ -1,0 +1,68 @@
+{
+  "name": "chrysalis-desktop-electron",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/electron/main.js",
+  "scripts": {
+    "dev": "concurrently -k -n main,renderer,electron \"tsc -p tsconfig.node.json --watch --preserveWatchOutput\" \"vite\" \"wait-on dist/electron/main.js http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "build:runtime": "powershell -ExecutionPolicy Bypass -File ..\\scripts\\build_electron_runtime.ps1 -OutDir dist/runtime",
+    "build:renderer": "vite build",
+    "build:main": "tsc -p tsconfig.node.json",
+    "build": "npm run build:runtime && npm run build:renderer && npm run build:main",
+    "package:win": "npm run build && electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.chrysalis.desktop",
+    "productName": "Chrysalis Desktop",
+    "asar": true,
+    "files": [
+      "dist/electron/**",
+      "dist/renderer/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "dist/runtime/chrysalis-runtime.exe",
+        "to": "runtime/chrysalis-runtime.exe"
+      }
+    ],
+    "directories": {
+      "output": "dist/release"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "ChrysalisDesktop-${version}-portable.${ext}"
+    }
+  },
+  "dependencies": {
+    "lucide-react": "^1.17.0",
+    "prosemirror-commands": "^1.7.1",
+    "prosemirror-history": "^1.5.0",
+    "prosemirror-keymap": "^1.2.3",
+    "prosemirror-model": "^1.25.7",
+    "prosemirror-state": "^1.4.4",
+    "prosemirror-view": "^1.41.8",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.1",
+    "@types/react": "^18.3.29",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^6.0.2",
+    "concurrently": "^10.0.0",
+    "cross-env": "^10.1.0",
+    "electron": "^42.3.0",
+    "electron-builder": "^26.8.1",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14",
+    "wait-on": "^9.0.10"
+  }
+}

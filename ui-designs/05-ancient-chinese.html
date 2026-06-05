@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chrysalis - 古风·山水</title>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600;700&family=ZCOOL+XiaoWei&family=Ma+Shan+Zheng&display=swap" rel="stylesheet">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #f4f9f4;
+  --bg-panel: #ffffffcc;
+  --bg-deep: #eaf5ea;
+  --ink: #2d3a2d;
+  --ink-light: #6b8068;
+  --accent: #4a8c6f;
+  --accent-deep: #2d6b4f;
+  --accent-glow: rgba(74,140,111,0.15);
+  --gold: #b8860b;
+  --gold-light: rgba(184,134,11,0.1);
+  --border: rgba(74,140,111,0.2);
+  --radius: 4px;
+  --seal: #c23a2b;
+}
+
+body {
+  font-family: 'Noto Serif SC', serif;
+  background: var(--bg);
+  color: var(--ink);
+  height: 100vh;
+  overflow: hidden;
+  transition: all 0.6s ease;
+}
+
+/* 水墨纹理背景 */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 15% 85%, rgba(74,140,111,0.06) 0%, transparent 50%),
+    radial-gradient(ellipse at 85% 15%, rgba(74,140,111,0.04) 0%, transparent 50%),
+    radial-gradient(ellipse at 50% 50%, rgba(184,134,11,0.02) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 山水装饰 */
+body::after {
+  content: '';
+  position: fixed;
+  bottom: 0;
+  right: 0;
+  width: 400px;
+  height: 300px;
+  background: linear-gradient(135deg, transparent 40%, rgba(74,140,111,0.03) 60%, rgba(74,140,111,0.06) 100%);
+  clip-path: polygon(100% 100%, 100% 30%, 80% 45%, 60% 20%, 40% 55%, 20% 35%, 0% 100%);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 240px 1fr 260px;
+  grid-template-rows: 64px 1fr;
+  height: 100vh;
+  position: relative;
+  z-index: 1;
+}
+
+/* 顶部 */
+.topbar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+}
+
+.logo-area {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.logo-seal {
+  width: 36px;
+  height: 36px;
+  border: 2px solid var(--seal);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Ma Shan Zheng', cursive;
+  font-size: 18px;
+  color: var(--seal);
+  transform: rotate(-3deg);
+  box-shadow: 1px 1px 0 rgba(194,58,43,0.2);
+}
+
+.logo-text {
+  display: flex;
+  flex-direction: column;
+}
+
+.logo-cn {
+  font-family: 'ZCOOL XiaoWei', serif;
+  font-size: 18px;
+  letter-spacing: 4px;
+  color: var(--ink);
+}
+
+.logo-en {
+  font-size: 10px;
+  color: var(--ink-light);
+  letter-spacing: 1px;
+}
+
+.topbar-center {
+  display: flex;
+  gap: 32px;
+}
+
+.nav-tab {
+  font-size: 14px;
+  color: var(--ink-light);
+  cursor: pointer;
+  padding: 4px 0;
+  border-bottom: 2px solid transparent;
+  transition: all 0.3s;
+  letter-spacing: 2px;
+}
+
+.nav-tab:hover { color: var(--ink); }
+.nav-tab.active {
+  color: var(--accent-deep);
+  border-bottom-color: var(--accent);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 主题切换 */
+.theme-switcher {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg-deep);
+  border-radius: 20px;
+  border: 1px solid var(--border);
+}
+
+.theme-btn {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.3s;
+  position: relative;
+}
+
+.theme-btn:hover { transform: scale(1.15); }
+.theme-btn.active { border-color: var(--ink); box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+
+.theme-btn[data-theme="green"] { background: linear-gradient(135deg, #4a8c6f, #2d6b4f); }
+.theme-btn[data-theme="ink"] { background: linear-gradient(135deg, #4a4a4a, #1a1a1a); }
+.theme-btn[data-theme="rust"] { background: linear-gradient(135deg, #c44d2b, #8b2500); }
+.theme-btn[data-theme="indigo"] { background: linear-gradient(135deg, #3d5a80, #1b3a5c); }
+.theme-btn[data-theme="plum"] { background: linear-gradient(135deg, #8b5e83, #5c2e50); }
+
+/* 侧栏 */
+.sidebar {
+  border-right: 1px solid var(--border);
+  padding: 20px 12px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+}
+
+.new-session {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: transparent;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  color: var(--ink-light);
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-bottom: 20px;
+}
+
+.new-session:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-glow);
+}
+
+.sidebar-label {
+  font-size: 11px;
+  color: var(--ink-light);
+  letter-spacing: 3px;
+  padding: 0 12px;
+  margin-bottom: 10px;
+}
+
+.session-item {
+  padding: 12px;
+  margin-bottom: 4px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all 0.2s;
+  position: relative;
+}
+
+.session-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 3px;
+  height: 0;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: all 0.3s;
+}
+
+.session-item:hover { background: var(--accent-glow); }
+.session-item:hover::before { height: 60%; }
+
+.session-item.active {
+  background: var(--accent-glow);
+}
+
+.session-item.active::before { height: 70%; background: var(--accent-deep); }
+
+.session-item .s-title {
+  font-size: 13px;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+
+.session-item.active .s-title { color: var(--accent-deep); }
+
+.session-item .s-time {
+  font-size: 11px;
+  color: var(--ink-light);
+}
+
+/* 主内容 */
+.main {
+  display: flex;
+  flex-direction: column;
+  background: transparent;
+}
+
+.messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 32px 48px;
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.msg {
+  margin-bottom: 28px;
+  position: relative;
+}
+
+.msg-label {
+  font-size: 11px;
+  color: var(--ink-light);
+  margin-bottom: 8px;
+  letter-spacing: 2px;
+}
+
+.msg.agent .msg-label {
+  color: var(--accent);
+}
+
+.msg-body {
+  font-size: 15px;
+  line-height: 2;
+}
+
+.msg-body p { margin-bottom: 12px; }
+
+/* 思考块 - 卷轴样式 */
+.thought-scroll {
+  margin: 16px 0;
+  padding: 16px 24px;
+  background: var(--bg-deep);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  position: relative;
+  font-size: 14px;
+  color: var(--ink-light);
+  font-style: italic;
+}
+
+.thought-scroll::before {
+  content: '思';
+  position: absolute;
+  left: -20px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 28px;
+  height: 28px;
+  background: var(--accent);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 500;
+}
+
+/* 工具调用 */
+.tool-invoke {
+  margin: 12px 0;
+  padding: 10px 16px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.tool-invoke .t-seal {
+  font-family: 'Ma Shan Zheng', cursive;
+  color: var(--seal);
+  font-size: 14px;
+}
+
+.tool-invoke .t-name {
+  color: var(--accent-deep);
+  font-weight: 500;
+}
+
+.tool-invoke .t-args {
+  color: var(--ink-light);
+  font-size: 12px;
+}
+
+.tool-invoke .t-status {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--accent);
+}
+
+/* 代码块 - 竹简风 */
+.code-bamboo {
+  margin: 16px 0;
+  padding: 20px 24px;
+  background: linear-gradient(180deg, #2d3a2d 0%, #1e2b1e 100%);
+  border-radius: var(--radius);
+  font-family: 'Noto Serif SC', serif;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #c8e6c9;
+  overflow-x: auto;
+  border: 1px solid rgba(74,140,111,0.3);
+  position: relative;
+}
+
+.code-bamboo::before {
+  content: '码';
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-family: 'Ma Shan Zheng', cursive;
+  font-size: 12px;
+  color: rgba(200,230,201,0.3);
+}
+
+.code-bamboo .kw { color: #81c784; }
+.code-bamboo .fn { color: #a5d6a7; }
+.code-bamboo .str { color: #ffcc80; }
+.code-bamboo .num { color: #ce93d8; }
+
+.msg-body ol {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.msg-body li {
+  margin-bottom: 8px;
+  line-height: 1.8;
+}
+
+/* 输入区域 */
+.input-wrap {
+  padding: 20px 48px 28px;
+  max-width: 760px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.input-field {
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  backdrop-filter: blur(20px);
+  transition: all 0.3s;
+}
+
+.input-field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 4px 24px var(--accent-glow);
+}
+
+.input-field textarea {
+  flex: 1;
+  border: none;
+  outline: none;
+  font-family: 'Noto Serif SC', serif;
+  font-size: 15px;
+  color: var(--ink);
+  resize: none;
+  height: 24px;
+  background: transparent;
+  line-height: 1.6;
+}
+
+.input-field textarea::placeholder { color: var(--ink-light); }
+
+.send-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 6px;
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Ma Shan Zheng', cursive;
+  font-size: 16px;
+  transition: all 0.3s;
+}
+
+.send-btn:hover {
+  background: var(--accent-deep);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--accent-glow);
+}
+
+/* 右侧面板 */
+.right-panel {
+  border-left: 1px solid var(--border);
+  padding: 20px 16px;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  backdrop-filter: blur(20px);
+}
+
+.rp-section {
+  margin-bottom: 24px;
+}
+
+.rp-heading {
+  font-size: 12px;
+  letter-spacing: 3px;
+  color: var(--ink-light);
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rp-heading .h-icon {
+  font-family: 'Ma Shan Zheng', cursive;
+  color: var(--accent);
+  font-size: 14px;
+}
+
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  font-size: 13px;
+  border-bottom: 1px dashed rgba(74,140,111,0.1);
+}
+
+.stat-row .label { color: var(--ink-light); font-size: 12px; }
+.stat-row .value { font-size: 12px; color: var(--ink); }
+
+/* 上下文进度 - 毛笔笔触风 */
+.context-bar {
+  height: 6px;
+  background: var(--bg-deep);
+  border-radius: 3px;
+  overflow: hidden;
+  margin: 8px 0;
+}
+
+.context-bar .fill {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-deep));
+  transition: width 0.6s ease;
+}
+
+/* 工作记忆标签 */
+.mem-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mem-tag {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 11px;
+  color: var(--ink-light);
+  transition: all 0.2s;
+}
+
+.mem-tag.hot {
+  border-color: var(--accent);
+  color: var(--accent-deep);
+  background: var(--accent-glow);
+}
+
+/* 时间轴 */
+.timeline {
+  position: relative;
+  padding-left: 18px;
+}
+
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 6px;
+  bottom: 6px;
+  width: 1px;
+  background: var(--border);
+}
+
+.tl-item {
+  position: relative;
+  padding: 8px 0;
+  font-size: 12px;
+  color: var(--ink-light);
+}
+
+.tl-item::before {
+  content: '';
+  position: absolute;
+  left: -16px;
+  top: 13px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+}
+
+.tl-item.active::before {
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+/* ============ 主题变体 ============ */
+
+/* 水墨主题 */
+body.theme-ink {
+  --bg: #f7f5f0;
+  --bg-panel: #fffffccc;
+  --bg-deep: #edeae4;
+  --ink: #1a1a1a;
+  --ink-light: #777;
+  --accent: #3a3a3a;
+  --accent-deep: #1a1a1a;
+  --accent-glow: rgba(0,0,0,0.06);
+  --gold: #8b7355;
+  --gold-light: rgba(139,115,85,0.1);
+  --border: rgba(0,0,0,0.08);
+  --seal: #8b2500;
+}
+
+/* 丹霞主题 */
+body.theme-rust {
+  --bg: #fdf6f0;
+  --bg-panel: #ffffffcc;
+  --bg-deep: #faeee5;
+  --ink: #3d2417;
+  --ink-light: #9c6b4e;
+  --accent: #c44d2b;
+  --accent-deep: #8b2500;
+  --accent-glow: rgba(196,77,43,0.1);
+  --gold: #b8860b;
+  --gold-light: rgba(184,134,11,0.1);
+  --border: rgba(196,77,43,0.15);
+  --seal: #c44d2b;
+}
+
+/* 靛青主题 */
+body.theme-indigo {
+  --bg: #f0f4f8;
+  --bg-panel: #ffffffcc;
+  --bg-deep: #e4ecf4;
+  --ink: #1b2838;
+  --ink-light: #5a7a9a;
+  --accent: #3d5a80;
+  --accent-deep: #1b3a5c;
+  --accent-glow: rgba(61,90,128,0.1);
+  --gold: #8b7355;
+  --gold-light: rgba(139,115,85,0.1);
+  --border: rgba(61,90,128,0.15);
+  --seal: #3d5a80;
+}
+
+/* 梅花主题 */
+body.theme-plum {
+  --bg: #f9f4f8;
+  --bg-panel: #ffffffcc;
+  --bg-deep: #f2e8ef;
+  --ink: #2d1f2b;
+  --ink-light: #8b6a82;
+  --accent: #8b5e83;
+  --accent-deep: #5c2e50;
+  --accent-glow: rgba(139,94,131,0.1);
+  --gold: #b8860b;
+  --gold-light: rgba(184,134,11,0.1);
+  --border: rgba(139,94,131,0.15);
+  --seal: #8b2500;
+}
+
+/* 主题切换提示浮层 */
+.theme-toast {
+  position: fixed;
+  top: 80px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-20px);
+  padding: 10px 24px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 13px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: all 0.4s ease;
+  pointer-events: none;
+  z-index: 999;
+  letter-spacing: 2px;
+}
+
+.theme-toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* 印章装饰 */
+.seal-decoration {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  width: 60px;
+  height: 60px;
+  border: 2px solid var(--seal);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Ma Shan Zheng', cursive;
+  font-size: 22px;
+  color: var(--seal);
+  opacity: 0.15;
+  transform: rotate(-15deg);
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- 顶栏 -->
+  <div class="topbar">
+    <div class="logo-area">
+      <div class="logo-seal">蛹</div>
+      <div class="logo-text">
+        <div class="logo-cn">化蛹</div>
+        <div class="logo-en">CHRYSALIS</div>
+      </div>
+    </div>
+    <div class="topbar-center">
+      <span class="nav-tab active">对话</span>
+      <span class="nav-tab">记忆</span>
+      <span class="nav-tab">技能</span>
+      <span class="nav-tab">工坊</span>
+    </div>
+    <div class="topbar-right">
+      <div class="theme-switcher">
+        <div class="theme-btn active" data-theme="green" title="青绿"></div>
+        <div class="theme-btn" data-theme="ink" title="水墨"></div>
+        <div class="theme-btn" data-theme="rust" title="丹霞"></div>
+        <div class="theme-btn" data-theme="indigo" title="靛青"></div>
+        <div class="theme-btn" data-theme="plum" title="梅花"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 左侧栏 -->
+  <div class="sidebar">
+    <button class="new-session">＋ 起新篇</button>
+    <div class="sidebar-label">今日</div>
+    <div class="session-item active">
+      <div class="s-title">认证模块重构</div>
+      <div class="s-time">午后 · 进行中</div>
+    </div>
+    <div class="session-item">
+      <div class="s-title">首页性能调优</div>
+      <div class="s-time">辰时</div>
+    </div>
+    <div class="sidebar-label" style="margin-top:16px;">昨日</div>
+    <div class="session-item">
+      <div class="s-title">数据库索引优化</div>
+      <div class="s-time">申时</div>
+    </div>
+    <div class="session-item">
+      <div class="s-title">部署文档编撰</div>
+      <div class="s-time">卯时</div>
+    </div>
+    <div class="sidebar-label" style="margin-top:16px;">本周</div>
+    <div class="session-item">
+      <div class="s-title">实时通知方案</div>
+      <div class="s-time">三日前</div>
+    </div>
+    <div class="session-item">
+      <div class="s-title">日志收集架构</div>
+      <div class="s-time">五日前</div>
+    </div>
+  </div>
+
+  <!-- 主对话区 -->
+  <div class="main">
+    <div class="messages">
+      <div class="msg user">
+        <div class="msg-label">问 ·</div>
+        <div class="msg-body">
+          <p>auth middleware 把 session token 直接存 cookie，法务说不符合新的合规要求。帮我改成服务端存储方案。</p>
+        </div>
+      </div>
+
+      <div class="msg agent">
+        <div class="msg-label">答 ·</div>
+        <div class="msg-body">
+          <div class="thought-scroll">容我先查阅当前认证模块的实现细节，以便判断影响范围与重构路径。</div>
+
+          <div class="tool-invoke">
+            <span class="t-seal">阅</span>
+            <span class="t-name">read_file</span>
+            <span class="t-args">src/middleware/auth.py</span>
+            <span class="t-status">48ms ✓</span>
+          </div>
+
+          <div class="tool-invoke">
+            <span class="t-seal">索</span>
+            <span class="t-name">grep</span>
+            <span class="t-args">"set_cookie.*token" — 全局搜索</span>
+            <span class="t-status">132ms ✓</span>
+          </div>
+
+          <p>查阅完毕。当前存在三处将明文 token 写入 cookie 之处，且未设 httpOnly 与 secure 标记。重构策略如下：</p>
+
+          <ol>
+            <li>引入 Redis 为 session 存储后端，token 以 AES-256 加密后存入服务端</li>
+            <li>Cookie 仅保存不可逆 session ID，设置 httpOnly + secure + SameSite</li>
+            <li>增加 TTL 过期与滑动续期逻辑，默认一时辰自动失效</li>
+          </ol>
+
+          <div class="code-bamboo">
+<span class="kw">class</span> <span class="fn">RedisSessionStore</span>:
+    <span class="kw">def</span> <span class="fn">create</span>(self, user_id: str, token: str) -> str:
+        sid = secrets.<span class="fn">token_urlsafe</span>(<span class="num">32</span>)
+        encrypted = self.<span class="fn">_encrypt</span>(token)
+        self.redis.<span class="fn">setex</span>(<span class="str">f"sess:{sid}"</span>, <span class="num">3600</span>, encrypted)
+        <span class="kw">return</span> sid
+
+    <span class="kw">def</span> <span class="fn">validate</span>(self, session_id: str) -> str | None:
+        raw = self.redis.<span class="fn">get</span>(<span class="str">f"sess:{session_id}"</span>)
+        <span class="kw">if not</span> raw:
+            <span class="kw">return</span> <span class="kw">None</span>
+        self.redis.<span class="fn">expire</span>(<span class="str">f"sess:{session_id}"</span>, <span class="num">3600</span>)
+        <span class="kw">return</span> self.<span class="fn">_decrypt</span>(raw)
+          </div>
+
+          <p>需要我直接在项目中创建这些文件吗？</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="input-wrap">
+      <div class="input-field">
+        <textarea placeholder="落笔于此..."></textarea>
+        <button class="send-btn">发</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 右侧面板 -->
+  <div class="right-panel">
+    <div class="rp-section">
+      <div class="rp-heading"><span class="h-icon">卷</span> 会话概览</div>
+      <div class="stat-row"><span class="label">模型</span><span class="value">claude-sonnet-4-6</span></div>
+      <div class="stat-row"><span class="label">对话轮次</span><span class="value">六回</span></div>
+      <div class="stat-row"><span class="label">缓存命中</span><span class="value">八九成</span></div>
+      <div class="context-bar"><div class="fill" style="width:72%"></div></div>
+      <div style="font-size:11px; color:var(--ink-light); text-align:right;">上下文 · 七成已用</div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-heading"><span class="h-icon">忆</span> 工作记忆</div>
+      <div class="mem-tags">
+        <span class="mem-tag hot">认证重构</span>
+        <span class="mem-tag hot">合规</span>
+        <span class="mem-tag">Redis</span>
+        <span class="mem-tag">会话管理</span>
+        <span class="mem-tag">Cookie安全</span>
+      </div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-heading"><span class="h-icon">迹</span> 执行足迹</div>
+      <div class="timeline">
+        <div class="tl-item">午后二刻 · 会话开启</div>
+        <div class="tl-item">午后二刻 · 阅文 48ms</div>
+        <div class="tl-item">午后三刻 · 索引 132ms</div>
+        <div class="tl-item">午后三刻 · 研判完成</div>
+        <div class="tl-item active">午后四刻 · 候命</div>
+      </div>
+    </div>
+
+    <div class="rp-section">
+      <div class="rp-heading"><span class="h-icon">技</span> 已激活技能</div>
+      <div class="mem-tags">
+        <span class="mem-tag hot">代码审阅</span>
+        <span class="mem-tag">安全审计</span>
+        <span class="mem-tag">重构规划</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 主题切换提示 -->
+<div class="theme-toast" id="themeToast"></div>
+
+<!-- 印章装饰 -->
+<div class="seal-decoration">化蛹</div>
+
+<script>
+const themeNames = {
+  green: '青绿山水',
+  ink: '水墨丹青',
+  rust: '丹霞赤壁',
+  indigo: '靛青深远',
+  plum: '梅花暗香'
+};
+
+const buttons = document.querySelectorAll('.theme-btn');
+const toast = document.getElementById('themeToast');
+
+buttons.forEach(btn => {
+  btn.addEventListener('click', () => {
+    const theme = btn.dataset.theme;
+
+    // 更新按钮状态
+    buttons.forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+
+    // 切换主题
+    document.body.className = theme === 'green' ? '' : `theme-${theme}`;
+
+    // 显示提示
+    toast.textContent = themeNames[theme];
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 1500);
+  });
+});
+</script>
+</body>
+</html>

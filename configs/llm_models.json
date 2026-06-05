@@ -2,26 +2,9 @@
   {
     "name": "gpt5.5",
     "provider": "openai",
-    "api_key": "sk-MHoCpjBcwq3OeA4Qs4henyFmbCnyushX8oHCMBFJLE28ALXm",
+    "api_key": "sk-O3pdT6NhqBIKNN2o7HvtTtfXJ9dAU6y49gpAHQcpa1M0iXlJ",
     "model": "gpt-5.5",
-    "base_url": "https://fushengyunsuan.cn/v1",
+    "base_url": "https://yyapi.cc/v1",
     "context_window": 400000
-  },
-  {
-    "name": "kiro-opus4.6",
-    "provider": "openai",
-    "api_key": "sk-w2C49elSeihMFB26uAF78XqpoZfoYEboxdIVrGQha3fJdkY5",
-    "model": "claude-opus-4-6",
-    "base_url": "https://fushengyunsuan.cn/v1",
-    "context_window": 400000
-  },
-  {
-    "name": "deepseek",
-    "provider": "openai",
-    "api_key": "${CHRYSALIS_API_KEY}",
-    "model": "deepseek-v4-flash",
-    "base_url": "https://api.deepseek.com",
-    "context_window": 200000,
-    "temperature": 0.2
   }
 ]

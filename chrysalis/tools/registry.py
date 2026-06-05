@@ -15,6 +15,8 @@ class ToolDef:
 
 _REGISTRY: dict[str, ToolDef] = {}
 
+_ALIASES: dict[str, str] = {}
+
 
 def tool(name: str, description: str, params: dict[str, str] | None = None):
     """装饰器：注册一个工具函数。函数签名必须是 (args: dict, workspace=None) -> dict。"""
@@ -26,6 +28,7 @@ def tool(name: str, description: str, params: dict[str, str] | None = None):
 
 def run_tool(name: str, args: dict, workspace: Path | None = None) -> dict:
     """统一分发入口。"""
+    name, args = _normalize_alias_call(name, args)
     tool_def = _REGISTRY.get(name)
     if not tool_def:
         return {"ok": False, "error": f"未知工具: {name}"}
@@ -33,6 +36,13 @@ def run_tool(name: str, args: dict, workspace: Path | None = None) -> dict:
         return tool_def.fn(args=args, workspace=workspace)
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _normalize_alias_call(name: str, args: dict) -> tuple[str, dict]:
+    target = _ALIASES.get(name)
+    if not target:
+        return name, args
+    return target, dict(args or {})
 
 
 def generate_tool_prompt(exclude: set[str] | None = None) -> str:

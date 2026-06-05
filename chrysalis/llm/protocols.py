@@ -154,7 +154,83 @@ def to_openai_messages(history: list[dict], system: str = "") -> list[dict]:
     return _sanitize_tool_pairs(out)
 
 
+def to_openai_responses_input(history: list[dict]) -> list[dict]:
+    out: list[dict] = []
+    for msg in history:
+        role = msg.get("role", "")
+        blocks = msg.get("blocks", [])
+        if role == "system":
+            text = _collect_text(blocks)
+            if text:
+                out.append(_responses_message("developer", [{"type": "input_text", "text": text}]))
+            continue
+
+        if role == "assistant":
+            text = _collect_text(blocks)
+            if text:
+                out.append(_responses_message("assistant", [{"type": "output_text", "text": text}]))
+            for block in blocks:
+                if block.get("type") == "tool_use":
+                    out.append({
+                        "type": "function_call",
+                        "call_id": block.get("id", ""),
+                        "name": block.get("name", ""),
+                        "arguments": block.get("arguments", "") or "{}",
+                    })
+            continue
+
+        content: list[dict] = []
+        for block in blocks:
+            btype = block.get("type", "")
+            if btype == "text":
+                text = block.get("text", "")
+                if text:
+                    content.append({"type": "input_text", "text": text})
+            elif btype == "image":
+                content.append({
+                    "type": "input_image",
+                    "image_url": f"data:{block.get('media_type', 'image/jpeg')};base64,{block.get('data', '')}",
+                })
+            elif btype == "tool_result":
+                if content:
+                    out.append(_responses_message("user", content))
+                    content = []
+                out.append({
+                    "type": "function_call_output",
+                    "call_id": block.get("tool_use_id", ""),
+                    "output": block.get("content", ""),
+                })
+        if content:
+            out.append(_responses_message("user", content))
+    return out
+
+
+def to_openai_responses_tools(tools: list[dict] | None) -> list[dict]:
+    result: list[dict] = []
+    for tool in tools or []:
+        fn = tool.get("function", tool)
+        name = fn.get("name")
+        if not name:
+            continue
+        result.append({
+            "type": "function",
+            "name": name,
+            "description": fn.get("description", ""),
+            "parameters": fn.get("parameters", {"type": "object", "properties": {}}),
+            "strict": bool(fn.get("strict", False)),
+        })
+    return result
+
+
 # ── helpers ──
+
+def _responses_message(role: str, content: list[dict]) -> dict:
+    return {
+        "type": "message",
+        "role": role,
+        "content": content,
+    }
+
 
 def _sanitize_tool_pairs(messages: list[dict]) -> list[dict]:
     """只保留仍然成对的 OpenAI tool_call/tool 消息。

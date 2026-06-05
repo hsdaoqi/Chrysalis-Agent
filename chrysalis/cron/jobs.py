@@ -382,6 +382,12 @@ def _job_path(config: AgentConfig, job_id: str) -> Path:
     return jobs_dir(config) / f"{safe_id}.json"
 
 
+def _with_job_path(config: AgentConfig, job: dict[str, Any]) -> dict[str, Any]:
+    enriched = dict(job)
+    enriched["path"] = str(_job_path(config, str(enriched.get("id") or "")))
+    return enriched
+
+
 def _atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     """安全地将字典写入 JSON 文件。使用临时文件和原子替换机制，防止写入过程中断导致文件损坏。"""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -407,16 +413,23 @@ def load_job(config: AgentConfig, job_id: str) -> dict[str, Any] | None:
     path = _job_path(config, job_id)
     if not path.exists():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    job = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(job, dict):
+        job["id"] = normalize_job_id(str(job.get("id") or path.stem))
+        return _with_job_path(config, job)
+    return None
 
 
 def save_job(config: AgentConfig, job: dict[str, Any]) -> dict[str, Any]:
     """将任务字典保存/覆盖到磁盘的 JSON 文件中，并返回保存后的任务字典。"""
     ensure_dirs(config)
     job_id = normalize_job_id(str(job.get("id", "")))
+    stored_job = dict(job)
+    stored_job["id"] = job_id
+    stored_job.pop("path", None)
+    _atomic_write_json(_job_path(config, job_id), stored_job)
     job["id"] = job_id
-    _atomic_write_json(_job_path(config, job_id), job)
-    return job
+    return _with_job_path(config, stored_job)
 
 
 def list_jobs(config: AgentConfig, include_disabled: bool = False) -> list[dict[str, Any]]:
@@ -428,8 +441,9 @@ def list_jobs(config: AgentConfig, include_disabled: bool = False) -> list[dict[
             job = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if include_disabled or job.get("enabled", True):
-            jobs.append(job)
+        if isinstance(job, dict) and (include_disabled or job.get("enabled", True)):
+            job["id"] = normalize_job_id(str(job.get("id") or path.stem))
+            jobs.append(_with_job_path(config, job))
     return jobs
 
 
@@ -486,6 +500,67 @@ def create_job(
             "started_at": None,
         },
     }
+    return save_job(config, job)
+
+
+def update_job(
+    config: AgentConfig,
+    job_id: str,
+    *,
+    schedule: dict[str, Any],
+    prompt: str = "",
+    name: str | None = None,
+    script: str | None = None,
+    no_agent: bool = False,
+    context_from: list[str] | None = None,
+    workdir: str | None = None,
+    deliver: str = "local",
+    repeat_times: int | None = None,
+    max_delay_minutes: int | None = None,
+) -> dict[str, Any]:
+    """Update an existing cron job while preserving runtime history."""
+    safe_id = normalize_job_id(job_id)
+    job = load_job(config, safe_id)
+    if not job:
+        raise CronError(f"job not found: {safe_id}")
+    state = job.setdefault("state", {})
+    if state.get("running"):
+        raise CronError("running job cannot be edited")
+
+    normalized_schedule = validate_schedule(schedule)
+    if no_agent and not script:
+        raise CronError("no_agent=true requires script")
+    if not no_agent and not prompt.strip():
+        raise CronError("prompt is required unless no_agent=true")
+
+    previous_schedule = job.get("schedule")
+    repeat = job.setdefault("repeat", {"times": None, "completed": 0})
+    completed = int(repeat.get("completed") or 0)
+    now = datetime.now()
+    if job.get("enabled", True):
+        last_run_at = None if normalized_schedule != previous_schedule else state.get("last_run_at")
+        state["next_run_at"] = compute_next_run(normalized_schedule, last_run_at=last_run_at, now=now)
+    else:
+        state["next_run_at"] = None
+
+    job.update(
+        {
+            "id": safe_id,
+            "name": name or safe_id,
+            "schedule": normalized_schedule,
+            "schedule_display": schedule_display(normalized_schedule),
+            "prompt": prompt,
+            "script": script,
+            "no_agent": bool(no_agent),
+            "context_from": context_from or [],
+            "workdir": workdir,
+            "deliver": deliver or "local",
+            "max_delay_minutes": max_delay_minutes or DEFAULT_MAX_DELAY_MINUTES,
+            "repeat": {"times": repeat_times, "completed": completed},
+            "updated_at": now.strftime("%Y-%m-%dT%H:%M"),
+            "state": state,
+        }
+    )
     return save_job(config, job)
 
 

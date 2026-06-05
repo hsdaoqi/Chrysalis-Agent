@@ -28,6 +28,7 @@ class SessionConfig:
     base_url: str
     model: str
     protocol: str = "openai"
+    wire_api: str = "chat"
     context_window: int = 28000
     temperature: float = 1.0
     max_tokens: int | None = None
@@ -47,10 +48,13 @@ class SessionConfig:
     compression_tail_token_budget: int | None = None
     compression_tool_result_budget: int = 200_000
     compression_max_failures: int = 3
+    prompt_cache_enabled: bool = True
 
     def __post_init__(self):
         self.base_url = self.base_url.rstrip("/")
         self.protocol = self.protocol.strip().lower()
+        self.wire_api = (self.wire_api or "chat").strip().lower()
+        self.prompt_cache_enabled = _coerce_bool(self.prompt_cache_enabled, True)
         if not self.name:
             self.name = self.model
 
@@ -126,6 +130,14 @@ def _fmt_num(n: int) -> str:
     if n >= 1_000:
         return f"{n / 1_000:.2f}k"
     return str(n)
+
+
+def _coerce_bool(value, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass

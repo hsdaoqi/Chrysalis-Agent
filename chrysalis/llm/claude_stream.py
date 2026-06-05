@@ -12,6 +12,8 @@ import requests
 from chrysalis.llm.openai_stream import stream_with_retry
 from chrysalis.llm.types import Response, SessionConfig, ToolCall, Usage
 
+_RUNTIME_CONTEXT_MARKER = "\n\n## Runtime Context\n"
+
 
 def claude_stream(
     config: SessionConfig,
@@ -46,12 +48,13 @@ def _build_payload(
         "stream": True,
         "max_tokens": config.max_tokens or 4096,
     }
+    cache_enabled = bool(getattr(config, "prompt_cache_enabled", True))
     if system:
-        payload["system"] = system
+        payload["system"] = _to_claude_system(system, cache_enabled=cache_enabled)
     if config.temperature is not None:
         payload["temperature"] = config.temperature
     if tools:
-        payload["tools"] = _to_claude_tools(tools)
+        payload["tools"] = _to_claude_tools(tools, cache_enabled=cache_enabled)
     if config.thinking != "disabled":
         payload["thinking"] = {
             "type": config.thinking,
@@ -61,12 +64,34 @@ def _build_payload(
     return payload
 
 
-def _to_claude_tools(tools: list[dict]) -> list[dict]:
+def _to_claude_system(system: str, *, cache_enabled: bool) -> str | list[dict]:
+    if not cache_enabled:
+        return system
+
+    stable, marker, runtime = system.partition(_RUNTIME_CONTEXT_MARKER)
+    blocks: list[dict] = []
+    stable = stable.strip()
+    if stable:
+        blocks.append({
+            "type": "text",
+            "text": stable,
+            "cache_control": {"type": "ephemeral"},
+        })
+
+    if marker:
+        runtime_text = ("## Runtime Context\n" + runtime).strip()
+        if runtime_text:
+            blocks.append({"type": "text", "text": runtime_text})
+
+    return blocks or system
+
+
+def _to_claude_tools(tools: list[dict], *, cache_enabled: bool = False) -> list[dict]:
     """将 OpenAI 格式的 tools 转为 Claude 格式。"""
     result = []
     for t in tools:
         if "input_schema" in t:
-            result.append(t)
+            result.append(dict(t))
             continue
         fn = t.get("function", t)
         result.append({
@@ -74,6 +99,9 @@ def _to_claude_tools(tools: list[dict]) -> list[dict]:
             "description": fn.get("description", ""),
             "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
         })
+    if cache_enabled and result:
+        result[-1] = dict(result[-1])
+        result[-1]["cache_control"] = {"type": "ephemeral"}
     return result
 
 

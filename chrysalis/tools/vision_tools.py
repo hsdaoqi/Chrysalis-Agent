@@ -10,17 +10,46 @@ _OCR_ENGINE = None
 
 @tool(
     name="screenshot",
-    description="截取当前屏幕内容用于视觉分析。返回的图片会自动发送给模型识别。",
-    params={"monitor": "显示器编号: 0=全部屏幕, 1=主屏, 2=副屏(默认1)"},
+    description="截取屏幕或指定目标窗口内容用于视觉分析。返回的图片会自动发送给模型识别。",
+    params={
+        "monitor": "显示器编号: 0=全部屏幕, 1=主屏, 2=副屏(默认1)",
+        "window_title": "可选，按窗口标题模糊匹配目标窗口",
+        "window_pid": "可选，按进程 PID 精确匹配目标窗口",
+        "window_exe": "可选，按进程可执行文件名模糊匹配目标窗口，如 chrome.exe",
+    },
 )
 def screenshot_tool(args: dict, workspace: Path | None = None) -> dict:
     try:
-        from chrysalis.llm.image_utils import capture_screen
+        from chrysalis.llm.image_utils import capture_screen, capture_window
     except ImportError:
         return {"ok": False, "error": "缺少 vision 依赖，请安装: pip install chrysalis[vision]"}
 
     monitor = int(args.get("monitor", 1))
+    window_title = str(args.get("window_title") or "").strip()
+    raw_window_pid = args.get("window_pid")
+    window_pid = _coerce_int(raw_window_pid)
+    window_exe = str(args.get("window_exe") or "").strip()
+    if raw_window_pid not in (None, "") and window_pid is None:
+        return {"ok": False, "error": "window_pid 必须是数字"}
     try:
+        if window_title or window_pid is not None or window_exe:
+            media_type, data, window = capture_window(
+                title=window_title,
+                pid=window_pid,
+                exe=window_exe,
+            )
+            return {
+                "ok": True,
+                "content": f"已截取目标窗口截图：{window.title}",
+                "window": {
+                    "title": window.title,
+                    "pid": window.pid,
+                    "exe": window.exe,
+                    "hwnd": window.hwnd,
+                },
+                "_image": {"media_type": media_type, "data": data},
+            }
+
         media_type, data = capture_screen(monitor=monitor)
     except Exception as exc:
         return {"ok": False, "error": f"截图失败: {exc}"}
@@ -30,6 +59,15 @@ def screenshot_tool(args: dict, workspace: Path | None = None) -> dict:
         "content": "已截取屏幕截图，图片已附加供视觉分析。",
         "_image": {"media_type": media_type, "data": data},
     }
+
+
+def _coerce_int(value) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 @tool(

@@ -26,42 +26,26 @@ pip install -e ".[tui]"
 
 如果要使用桌面端：
 
-```bash
-pip install -e ".[desktop]"
-chrysalis-desktop
+```powershell
+pip install -e .
+cd desktop-electron
+npm install
+npm run dev
 ```
 
-打包成 Windows `.exe`：
+打包 Electron 桌面端：
 
 ```powershell
-.\scripts\build_desktop.ps1
+.\scripts\build_desktop_electron.ps1 -InstallNodeDeps
 ```
 
-默认输出：
+默认输出在：
 
 ```text
-dist\Chrysalis.exe
-```
-
-如果更希望得到一个启动更快、文件夹形式的版本：
-
-```powershell
-.\scripts\build_desktop.ps1 -OneDir
-```
-
-输出：
-
-```text
-dist\Chrysalis\Chrysalis.exe
+desktop-electron\dist\release\ChrysalisDesktop-*-portable.exe
 ```
 
 右键这个 `.exe` 发送到桌面快捷方式即可。
-
-也可以构建后自动创建桌面快捷方式：
-
-```powershell
-.\scripts\build_desktop.ps1 -Shortcut
-```
 
 如果要使用视觉或语音能力：
 
@@ -691,3 +675,100 @@ workspace/
 - 不伪造 tool result；断裂 tool 协议块会被修复或降级。
 
 ![img_1.png](assets/images/img_1.png)
+
+## Messaging Gateway
+
+QQ、个人微信和飞书可以通过统一网关接入 Chrysalis：
+
+```bash
+pip install -e ".[gateway]"
+
+chrysalis-gateway qq
+chrysalis-gateway qq-personal
+chrysalis-gateway onebot
+chrysalis-gateway wechat
+chrysalis-gateway feishu
+chrysalis-gateway qq-personal wechat feishu
+chrysalis-gateway qq-personal --shared-groups
+```
+
+`qq` 是 QQ 开放平台官方 Bot，群聊通常需要按平台规则添加机器人并通过 @ 触发；如果你想把“一个 QQ 号”拉进普通群聊，请用 `qq-personal` / `onebot`，它连接 NapCat、Lagrange 等 OneBot v11 WebSocket 实现。
+
+`feishu` / `lark` 是飞书自建应用机器人，通过事件订阅长连接收消息，通过飞书 OpenAPI 发送文本、图片和文件。
+
+环境变量：
+
+```text
+CHRYSALIS_GATEWAY_ALLOWED_TOOLS=
+
+CHRYSALIS_QQ_APP_ID=
+CHRYSALIS_QQ_APP_SECRET=
+CHRYSALIS_QQ_ALLOWED_USERS=
+CHRYSALIS_QQ_ALLOW_ALL=false
+
+CHRYSALIS_ONEBOT_WS_URL=ws://127.0.0.1:3001
+CHRYSALIS_ONEBOT_ACCESS_TOKEN=
+CHRYSALIS_ONEBOT_ALLOWED_USERS=
+CHRYSALIS_ONEBOT_ALLOWED_GROUPS=
+CHRYSALIS_ONEBOT_ALLOW_ALL=false
+CHRYSALIS_ONEBOT_REQUIRE_MENTION=true
+CHRYSALIS_ONEBOT_REPLY_WITH_MENTION=true
+CHRYSALIS_ONEBOT_TRIGGER_PREFIXES=
+
+CHRYSALIS_WECHAT_ALLOWED_USERS=
+CHRYSALIS_WECHAT_ALLOW_ALL=false
+CHRYSALIS_WECHAT_TOKEN_FILE=
+
+CHRYSALIS_FEISHU_APP_ID=
+CHRYSALIS_FEISHU_APP_SECRET=
+CHRYSALIS_FEISHU_VERIFICATION_TOKEN=
+CHRYSALIS_FEISHU_ENCRYPT_KEY=
+CHRYSALIS_FEISHU_BOT_OPEN_ID=
+CHRYSALIS_FEISHU_ALLOWED_USERS=
+CHRYSALIS_FEISHU_ALLOWED_CHATS=
+CHRYSALIS_FEISHU_ALLOW_ALL=false
+CHRYSALIS_FEISHU_REQUIRE_MENTION=true
+CHRYSALIS_FEISHU_TRIGGER_PREFIXES=
+CHRYSALIS_FEISHU_API_BASE=https://open.feishu.cn/open-apis
+```
+
+`*_ALLOWED_USERS` 用英文逗号分隔；留空表示开放访问。QQ群聊和飞书群聊默认按“群 + 发送者”隔离会话，`--shared-groups` 会改成整个群共享一个会话。
+
+网关会话默认按远程不可信输入处理：模型在 QQ、微信、飞书里只会看到少量内部控制工具，不能直接读写本机文件、运行代码、截图、执行浏览器 JS 或派生子 Agent；远程聊天用户也不能批准本机权限弹窗。`CHRYSALIS_GATEWAY_ALLOWED_TOOLS` 可以用英文逗号额外开放工具名，`*` 会暴露全部工具名，但凡需要本机权限确认的动作仍会被远程网关拒绝。入站附件只接受网关缓存目录里的文件；结果里的 `[FILE:...]` 只会发送 `workspace` 或 `data/gateway` 下真实存在的文件，避免把任意本机路径发到群聊。
+
+个人 QQ 群聊推荐流程：
+
+1. 用一个专门的 QQ 小号登录 NapCat / Lagrange，并启用 OneBot v11 WebSocket 服务，例如 `ws://127.0.0.1:3001`。
+2. 把这个 QQ 小号拉进群。
+3. 运行 `chrysalis connect qq-personal`，或让 agent 调用 `gateway_connect`，platform 填 `qq-personal` / `onebot`。
+4. 群里默认需要 @ 这个 QQ 号才会触发；也可以设置 `CHRYSALIS_ONEBOT_TRIGGER_PREFIXES=!`，用 `!帮我总结一下` 这种前缀触发。
+
+个人微信首次启动会弹出二维码登录，token 默认保存到 `data/gateway/wechat_personal_token.json`。QQ、微信和飞书都支持接收文字、图片和附件；agent 结果里的 `[FILE:...]` 会尽量按平台能力原生回传，其中 QQ 和飞书本地文件会走平台上传流程，失败时回退为文件路径文本。
+
+飞书推荐流程：
+
+1. 在飞书开放平台创建自建应用，启用机器人能力。
+2. 在事件订阅里开启长连接，并订阅 `im.message.receive_v1`。
+3. 给应用开通发送消息、接收消息、上传/下载图片或文件所需权限，并发布到企业。
+4. 在 `.env` 填入 `CHRYSALIS_FEISHU_APP_ID`、`CHRYSALIS_FEISHU_APP_SECRET`，有校验/加密时再填 token 和 encrypt key。
+5. 运行 `chrysalis connect feishu`，或让 agent 调用 `gateway_connect`，platform 填 `feishu` / `lark`。
+
+只想接某个平台时，直接运行：
+
+```bash
+chrysalis connect wechat
+chrysalis connect feishu
+```
+
+如果是让 agent 自己去做，这个项目里还有 `gateway_connect` 工具。
+
+网关内可用命令：
+
+```text
+/help
+/status
+/stop
+/new 或 /reset
+/session
+/session new
+```

@@ -11,6 +11,13 @@ from textual.widgets import Static, Input, Collapsible, Markdown, OptionList
 from textual.widgets.option_list import Option
 from textual.screen import ModalScreen
 
+from chrysalis.history_display import (
+    extract_text,
+    extract_tool_names,
+    is_internal_assistant_candidate,
+    is_internal_prompt_message,
+    normalize_final_text,
+)
 from chrysalis.tui.bridge import AgentBridge
 from chrysalis.tui.events import (
     AgentDone,
@@ -195,7 +202,7 @@ class TodoPanel(Static):
     DEFAULT_CSS = """
     TodoPanel {
         height: auto;
-        max-height: 8;
+        max-height: 10;
         background: #050505;
         border-top: solid #2b2b3f;
         padding: 0;
@@ -222,47 +229,32 @@ class TodoPanel(Static):
     def _refresh_view(self) -> None:
         snapshot = self._snapshot
         todos = snapshot.get("todos") or []
-        total = int(snapshot.get("total_count", len(todos)))
-        pending = int(snapshot.get("pending_count", len([item for item in todos if item.get("status") != "completed"])))
+        pending_count = int(snapshot.get("pending_count", len([item for item in todos if not _todo_item_done(item)])))
         goal = str(snapshot.get("goal", "")).strip()
         active_id = str(snapshot.get("active_todo_id", ""))
 
-        if not todos or pending <= 0:
+        if not todos:
             self.display = False
             self.update("")
             return
 
         self.display = True
-        header = f"[#cdd6f4]TODO[/] [#585b70]{pending}/{total} pending[/]"
+        header = f"[#cdd6f4]TODO[/] [#585b70]{pending_count} open[/]"
         if goal:
             header += f" [#585b70]|[/] [#cdd6f4]{goal}[/]"
         lines = [header]
 
-        pending_items = [item for item in todos if str(item.get("status", "pending")) != "completed"]
-        completed_items = [item for item in todos if str(item.get("status", "pending")) == "completed"]
-        visible_items, hidden_pending = _compact_todo_items(pending_items)
-
-        for item in visible_items:
-            if item is None:
-                lines.append(f"[#585b70]... +{hidden_pending} pending[/]")
-                continue
+        for item in _compact_todo_items(todos):
             title = str(item.get("title", "")).strip() or "(untitled)"
-            note = str(item.get("note", "")).strip()
+            detail = str(item.get("note") or "").strip()
             item_id = str(item.get("id", ""))
-            status = str(item.get("status", "pending"))
+            item_status = str(item.get("status", "pending"))
             active = item_id == active_id
             prefix = "->" if active else "-"
-            suffix = f" [#585b70]{note}[/]" if note else ""
-            mark = "[#a6e3a1]x[/]" if status == "completed" else "[#f9e2af]o[/]"
+            suffix = f" [#585b70]{detail}[/]" if detail else ""
+            mark = "[#a6e3a1]x[/]" if _todo_item_done(item) else "[#f9e2af]o[/]"
             style = "[#b4befe bold]" if active else "[#cdd6f4]"
-            lines.append(f"{mark} {style}{prefix} {title}[/]{suffix}")
-
-        if completed_items:
-            for item in completed_items[-2:]:
-                title = str(item.get("title", "")).strip() or "(untitled)"
-                note = str(item.get("note", "")).strip()
-                suffix = f" [#585b70]{note}[/]" if note else ""
-                lines.append(f"[#a6e3a1]x[/] [#585b70]- {title}[/]{suffix}")
+            lines.append(f"{mark} {style}{prefix} {title}[/] [#585b70]{item_status}[/]{suffix}")
 
         self.update(Text.from_markup("\n".join(lines)))
 
@@ -555,7 +547,8 @@ class ChrysalisApp(App):
         self._update_status(event.status, event.detail)
 
     def on_working_change(self, event: WorkingChange) -> None:
-        self.todo_panel.set_snapshot(event.snapshot)
+        snapshot = event.snapshot if isinstance(event.snapshot, dict) else {}
+        self.todo_panel.set_snapshot(snapshot.get("todo", snapshot))
 
     def on_permission_requested(self, event: PermissionRequested) -> None:
         self._permission_waiting = True
@@ -876,11 +869,13 @@ class ChrysalisApp(App):
         self._out("[#585b70]── 会话历史 ──[/]")
         self._out("")
 
-        for msg in history:
+        for index, msg in enumerate(history):
             role = msg.get("role", "")
             blocks = msg.get("blocks", [])
 
             if role == "user":
+                if is_internal_prompt_message(msg):
+                    continue
                 text = self._extract_user_text(blocks)
                 if text:
                     widget = Static(f"[bold #cdd6f4]> {text}[/]", markup=True)
@@ -889,12 +884,10 @@ class ChrysalisApp(App):
                     self._out("")
 
             elif role == "assistant":
+                if is_internal_assistant_candidate(history, index):
+                    continue
                 text = self._extract_assistant_text(blocks)
-                tool_names = [
-                    b.get("name", "")
-                    for b in blocks
-                    if b.get("type") == "tool_use" and b.get("name")
-                ]
+                tool_names = extract_tool_names(blocks)
                 if tool_names:
                     tools_str = ", ".join(tool_names)
                     self._out(f"  [#585b70]⟳ {tools_str}[/]")
@@ -909,22 +902,14 @@ class ChrysalisApp(App):
 
     def _extract_user_text(self, blocks: list[dict]) -> str:
         """从 user message blocks 中提取纯文本（跳过 tool_result）。"""
-        parts = []
-        for b in blocks:
-            if b.get("type") == "text":
-                parts.append(b.get("text", ""))
-        text = "".join(parts).strip()
+        text = extract_text(blocks)
         if len(text) > 200:
             text = text[:200] + "..."
         return text
 
     def _extract_assistant_text(self, blocks: list[dict]) -> str:
         """从 assistant message blocks 中提取最终回答文本。"""
-        parts = []
-        for b in blocks:
-            if b.get("type") == "text":
-                parts.append(b.get("text", ""))
-        return "".join(parts).strip()
+        return normalize_final_text(extract_text(blocks))
 
     def _out(self, text: str) -> None:
         self.query_one("#scroll").mount(Static(text, markup=True))
@@ -1058,11 +1043,15 @@ def _permission_summary_from_request(request: dict) -> str:
     return str(request.get("question", tool))
 
 
-def _compact_todo_items(items: list[dict]) -> tuple[list[dict | None], int]:
+def _compact_todo_items(items: list[dict]) -> list[dict]:
     if len(items) <= 4:
-        return items, 0
-    hidden = len(items) - 4
-    return [items[0], items[1], None, items[-2], items[-1]], hidden
+        return items
+    return items[:2] + items[-2:]
+
+
+def _todo_item_done(item: dict) -> bool:
+    status = str(item.get("status", "")).strip().lower().replace(" ", "_").replace("-", "_")
+    return status in {"completed", "complete", "done"}
 
 
 _RICH_TAG_RE = re.compile(r"\[/?(?:#[0-9a-fA-F]{3,8}|[a-zA-Z][a-zA-Z0-9_ -]*(?: [^\]]*)?)\]")
