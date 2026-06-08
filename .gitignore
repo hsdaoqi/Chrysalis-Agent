@@ -66,3 +66,6 @@ nul
 
 # Local settings
 .claude/settings.local.json
+
+# API 密钥配置
+configs/llm_models.json
