@@ -11,6 +11,16 @@ def _tool_result() -> dict:
     return {"role": "user", "blocks": [{"type": "tool_result", "content": "ok"}]}
 
 
+def _orphaned_tool_result_text() -> dict:
+    return {
+        "role": "user",
+        "blocks": [{
+            "type": "text",
+            "text": "[orphaned tool result converted to text]\n{\"ok\": false}",
+        }],
+    }
+
+
 def test_session_turns_count_user_requests_not_history_messages(tmp_path: Path) -> None:
     store = SessionStore(tmp_path)
     store.new_session(model="test-model")
@@ -18,6 +28,7 @@ def test_session_turns_count_user_requests_not_history_messages(tmp_path: Path) 
         _text("user", "first"),
         _text("assistant", "working"),
         _tool_result(),
+        _orphaned_tool_result_text(),
         _text("assistant", "done"),
         _text("user", "second"),
     ])

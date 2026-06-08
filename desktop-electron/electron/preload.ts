@@ -24,6 +24,10 @@ contextBridge.exposeInMainWorld('chrysalis', {
     ipcRenderer.invoke('chrysalis:deleteSession', sessionId),
   runTask: (task: string, sessionId?: string): Promise<RuntimeResponse> =>
     ipcRenderer.invoke('chrysalis:runTask', task, sessionId),
+  resumeTask: (sessionId?: string): Promise<RuntimeResponse> =>
+    ipcRenderer.invoke('chrysalis:resumeTask', sessionId),
+  guideTask: (sessionId: string, guidance: string): Promise<RuntimeResponse> =>
+    ipcRenderer.invoke('chrysalis:guideTask', sessionId, guidance),
   resolvePendingUserAction: (sessionId: string, reply: string): Promise<RuntimeResponse> =>
     ipcRenderer.invoke('chrysalis:resolvePendingUserAction', sessionId, reply),
   cancelTask: (sessionId?: string): Promise<RuntimeResponse> => ipcRenderer.invoke('chrysalis:cancelTask', sessionId),

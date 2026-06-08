@@ -42,13 +42,13 @@ def _build_payload(
     system: str,
     tools: list[dict] | None,
 ) -> dict:
+    cache_enabled = bool(getattr(config, "prompt_cache_enabled", True))
     payload: dict = {
         "model": config.model,
-        "messages": messages,
+        "messages": _apply_messages_cache(messages, cache_enabled=cache_enabled),
         "stream": True,
         "max_tokens": config.max_tokens or 4096,
     }
-    cache_enabled = bool(getattr(config, "prompt_cache_enabled", True))
     if system:
         payload["system"] = _to_claude_system(system, cache_enabled=cache_enabled)
     if config.temperature is not None:
@@ -62,6 +62,35 @@ def _build_payload(
         }
         payload.pop("temperature", None)
     return payload
+
+
+def _apply_messages_cache(messages: list[dict], *, cache_enabled: bool) -> list[dict]:
+    """在对话历史末尾打一个缓存断点，让不断增长的历史前缀被复用。
+
+    多轮工具调用里 system / tools 已各占一个断点，这里再给「最后一条 message 的
+    最后一个 content block」挂 cache_control：本轮把到目前为止的完整历史写入缓存，
+    下一轮这段历史就成了可命中的前缀，避免每轮把旧历史按全价 input 重新计费。
+
+    不修改入参 messages（只浅拷贝需要改动的最后一条消息及其末尾 block）。
+    """
+    if not cache_enabled or not messages:
+        return messages
+
+    last_index = len(messages) - 1
+    last_msg = messages[last_index]
+    content = last_msg.get("content") if isinstance(last_msg, dict) else None
+    if not isinstance(content, list) or not content:
+        return messages
+    last_block = content[-1]
+    if not isinstance(last_block, dict):
+        return messages
+
+    cached_block = dict(last_block)
+    cached_block["cache_control"] = {"type": "ephemeral"}
+    new_content = content[:-1] + [cached_block]
+    new_msg = dict(last_msg)
+    new_msg["content"] = new_content
+    return messages[:last_index] + [new_msg]
 
 
 def _to_claude_system(system: str, *, cache_enabled: bool) -> str | list[dict]:

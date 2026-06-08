@@ -32,6 +32,7 @@ HELP_TEXT = """Chrysalis gateway commands:
 /help - Show this help
 /status - Show current session and model
 /stop - Stop the current task
+/btw <guidance> - Guide the current running task without stopping it
 /new or /reset - Start a fresh session for this chat
 /session - Show this gateway session
 /session new - Start a fresh session for this chat
@@ -39,6 +40,8 @@ HELP_TEXT = """Chrysalis gateway commands:
 
 FILE_TAG_RE = re.compile(r"\[FILE:([^\]]+)\]")
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".tiff", ".tif"}
+TRUSTED_HOST_GATEWAY_PLATFORMS = {"qq"}
+SHARED_GROUP_SESSION_PLATFORMS = {"qq_personal"}
 GATEWAY_ATTACHMENT_DENY_NOTE = "部分附件因远程网关安全策略被忽略。"
 
 
@@ -64,6 +67,7 @@ class SessionBinding:
     session_key: str
     session_id: str
     kernel: Kernel
+    trusted_host: bool = False
 
 
 class GatewaySessionMap:
@@ -153,11 +157,15 @@ class GatewayService:
         await self._run_task(adapter, event, binding)
 
     def _binding_for(self, source: SessionSource) -> SessionBinding:
+        group_sessions_per_user = self.group_sessions_per_user
+        if _uses_shared_group_sessions(source):
+            group_sessions_per_user = False
         session_key = build_session_key(
             source,
-            group_sessions_per_user=self.group_sessions_per_user,
+            group_sessions_per_user=group_sessions_per_user,
             thread_sessions_per_user=self.thread_sessions_per_user,
         )
+        trusted_host = _is_trusted_host_gateway(source.platform)
         with self._guard:
             existing = self._bindings.get(session_key)
             if existing is not None:
@@ -166,22 +174,29 @@ class GatewayService:
             session_id = self.session_map.get(session_key)
             if session_id:
                 try:
-                    kernel = self._create_gateway_kernel(session_id=session_id)
+                    kernel = self._create_gateway_kernel(session_id=session_id, trusted_host=trusted_host)
                 except Exception:
-                    kernel = self._create_gateway_kernel()
+                    kernel = self._create_gateway_kernel(trusted_host=trusted_host)
                     session_id = kernel.session_store.current_id or kernel.new_session()
                     self.session_map.set(session_key, session_id)
             else:
-                kernel = self._create_gateway_kernel()
+                kernel = self._create_gateway_kernel(trusted_host=trusted_host)
                 session_id = kernel.session_store.current_id or kernel.new_session()
                 self.session_map.set(session_key, session_id)
 
-            binding = SessionBinding(session_key=session_key, session_id=session_id, kernel=kernel)
+            binding = SessionBinding(
+                session_key=session_key,
+                session_id=session_id,
+                kernel=kernel,
+                trusted_host=trusted_host,
+            )
             self._bindings[session_key] = binding
             return binding
 
-    def _create_gateway_kernel(self, session_id: str | None = None) -> Kernel:
+    def _create_gateway_kernel(self, session_id: str | None = None, *, trusted_host: bool = False) -> Kernel:
         kernel = Kernel(config=self.config, session_id=session_id)
+        if trusted_host:
+            return kernel
         permission_engine = GatewayPermissionEngine(allowed_read_roots=self._gateway_media_roots)
         kernel.loop.permission_engine = permission_engine
         kernel.permission_engine = permission_engine
@@ -203,7 +218,8 @@ class GatewayService:
     async def _run_task(self, adapter: GatewayAdapter, event: MessageEvent, binding: SessionBinding) -> None:
         lock = self._lock_for(binding.session_key)
         if lock.locked():
-            await adapter.send_text(event.source, "上一条任务还在处理，这条消息会排队。发送 /stop 可以中断当前任务。")
+            await adapter.send_text(event.source, "上一条任务还在处理。发送 /btw <引导> 可以调整方向，发送 /stop 可以中断当前任务。")
+            return
 
         async with lock:
             await adapter.send_text(event.source, "收到，正在处理...")
@@ -225,7 +241,12 @@ class GatewayService:
             )
             self._bind_activity_callbacks(binding, task_id)
             try:
-                session_context = build_session_context(event.source, binding.session_key, binding.session_id)
+                session_context = build_session_context(
+                    event.source,
+                    binding.session_key,
+                    binding.session_id,
+                    include_first_principle=not binding.trusted_host,
+                )
                 result = await asyncio.to_thread(binding.kernel.run, task, session_context, images=images)
             except Exception as exc:
                 internal_error = f"{type(exc).__name__}: {exc}"
@@ -385,11 +406,16 @@ class GatewayService:
             return
         suffix = Path(path).suffix.lower()
         if suffix in {".mp4", ".mov", ".avi", ".mkv", ".webm"}:
-            await adapter.send_video(source, path)
+            result = await adapter.send_video(source, path)
         elif suffix in IMAGE_EXTS:
-            await adapter.send_image(source, path)
+            result = await adapter.send_image(source, path)
         else:
-            await adapter.send_file(source, path)
+            result = await adapter.send_file(source, path)
+        if result is None or not result.success:
+            error = _redact_host_details(getattr(result, "error", "") or "unknown error")
+            if len(error) > 180:
+                error = error[:177].rstrip() + "..."
+            await adapter.send_text(source, f"附件发送失败：{Path(path).name or path}（{error}）")
 
     async def _handle_command(self, adapter: GatewayAdapter, event: MessageEvent, binding: SessionBinding) -> None:
         cmd = event.command_name() or ""
@@ -415,6 +441,19 @@ class GatewayService:
             binding.kernel.cancel()
             self.activity.mark_session_stopping(binding.session_id)
             await adapter.send_text(event.source, "已请求停止当前任务。")
+            return
+        if cmd == "btw":
+            guidance = args.strip()
+            if not guidance:
+                await adapter.send_text(event.source, "用法：/btw <运行中要补充的引导>")
+                return
+            if not lock.locked():
+                await adapter.send_text(event.source, "当前没有运行中的任务，/btw 只用于引导正在执行的任务。")
+                return
+            if binding.kernel.guide(guidance):
+                await adapter.send_text(event.source, "已把 /btw 引导加入当前任务。")
+                return
+            await adapter.send_text(event.source, "引导内容为空。")
             return
         if cmd in {"new", "reset"}:
             if lock.locked():
@@ -544,3 +583,13 @@ def _gateway_outgoing_roots(config: AgentConfig) -> list[Path]:
         if resolved not in roots:
             roots.append(resolved)
     return roots
+
+
+def _is_trusted_host_gateway(platform: str) -> bool:
+    return str(platform or "").strip().lower() in TRUSTED_HOST_GATEWAY_PLATFORMS
+
+
+def _uses_shared_group_sessions(source: SessionSource) -> bool:
+    platform = str(source.platform or "").strip().lower()
+    chat_type = str(source.chat_type or "").strip().lower() or "dm"
+    return platform in SHARED_GROUP_SESSION_PLATFORMS and chat_type != "dm"

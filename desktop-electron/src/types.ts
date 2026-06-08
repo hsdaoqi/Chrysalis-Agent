@@ -475,6 +475,7 @@ export interface RuntimeSnapshot {
   workspace: WorkspaceSnapshot
   session_filter: string
   pending_user_action?: Record<string, unknown> | null
+  resumable_session?: boolean
   cron?: CronSnapshot
   reviews?: ReviewSnapshot
   gateway?: GatewaySnapshot
@@ -568,6 +569,8 @@ export interface ChrysalisApi {
   loadSession: (sessionId: string) => Promise<RuntimeResponse<RuntimeSnapshot>>
   deleteSession: (sessionId: string) => Promise<RuntimeResponse<RuntimeSnapshot>>
   runTask: (task: string, sessionId?: string) => Promise<RuntimeResponse<{ started: boolean; task_id: string; session_id: string }>>
+  resumeTask: (sessionId?: string) => Promise<RuntimeResponse<{ started: boolean; task_id: string; session_id: string; resumed: boolean }>>
+  guideTask: (sessionId: string, guidance: string) => Promise<RuntimeResponse<{ guided: boolean; task_id: string; session_id: string }>>
   resolvePendingUserAction: (sessionId: string, reply: string) => Promise<RuntimeResponse<{ started: boolean; task_id: string; session_id: string }>>
   cancelTask: (sessionId?: string) => Promise<RuntimeResponse<{ cancelled: boolean }>>
   renameSession: (sessionId: string, title: string) => Promise<RuntimeResponse<RuntimeSnapshot>>

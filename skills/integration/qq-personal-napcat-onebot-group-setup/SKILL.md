@@ -89,3 +89,29 @@
 
 ## provenance
 - Learned from successful session on 2026-06-02: connected QQ `3843511481` to NapCat/OneBot for QQ group robot use.
+
+
+## verified_restart_runbook_2026_06_06
+- 适用：用户说“重新启动个人 QQ bot / 我关掉了”，需要恢复 Chrysalis `qq_personal` 网关与 NapCat OneBot 连接。
+- 启动顺序已验证：
+  1. 启动 Chrysalis 网关：`gateway_connect(platform="qq-personal")`，或在项目根执行 `.venv\Scripts\python.exe -m chrysalis.gateway.main qq_personal`。
+  2. 用管理员权限启动 NapCat：在 `data/napcat/OneKey_20260602_123844/bootmain` 运行 `launcher.bat 3843511481`。
+  3. 等待网关自动重连；窗口出现 `[QQ personal] connected` 才算完成。
+- 关键验证命令：
+  ```powershell
+  Get-NetTCPConnection -ErrorAction SilentlyContinue | Where-Object { $_.LocalPort -in 3001,6099 -or $_.RemotePort -in 3001,6099 }
+  ```
+- 成功判据（不要只看 Listen）：
+  - `6099` Listen：NapCat WebUI 已起。
+  - `127.0.0.1:3001` Listen：OneBot WebSocket Server 已起。
+  - 必须出现 `127.0.0.1:<ephemeral> <-> 127.0.0.1:3001 Established`：Chrysalis 网关已连上 NapCat。
+- 已验证坑：
+  - `gateway_connect(platform="qq-personal/onebot")` 不支持；应使用 `qq-personal`。
+  - 普通权限运行 `launcher.bat` 会在窗口显示 `Please run this script in administrator mode.`，且 3001/6099 不会成功监听；必须管理员运行。
+  - `launch_local_qq_3843511481.bat` 可能只启动 QQ.exe，但不保证 3001/6099 监听；恢复 bot 优先用管理员 `launcher.bat 3843511481`。
+  - 网关若早于 NapCat 启动，会先报 `[WinError 10061]`，NapCat 3001 启动后会自动重连；等到 `[QQ personal] connected` 或 Established 再结束。
+  - PID 是易变状态，不要写死；验证时看端口状态和命令行进程名。
+- 终端保持：QQ / NapCat / Chrysalis 网关窗口都不要关闭，关闭会导致机器人掉线。
+
+## provenance_2026_06_06
+- Verified by successful restart: `qq_personal` gateway started, NapCat launched via administrator `launcher.bat 3843511481`, `6099` and `127.0.0.1:3001` listened, and `127.0.0.1:<ephemeral> <-> 127.0.0.1:3001` reached `Established`.

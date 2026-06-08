@@ -89,6 +89,12 @@ function installIpcHandlers(): void {
   ipcMain.handle('chrysalis:runTask', (_event, task: string, sessionId?: string) =>
     safeRequest('run_task', { task, session_id: sessionId }),
   )
+  ipcMain.handle('chrysalis:resumeTask', (_event, sessionId?: string) =>
+    safeRequest('resume_task', { session_id: sessionId }),
+  )
+  ipcMain.handle('chrysalis:guideTask', (_event, sessionId: string, guidance: string) =>
+    safeRequest('guide_task', { session_id: sessionId, guidance }),
+  )
   ipcMain.handle('chrysalis:resolvePendingUserAction', (_event, sessionId: string, reply: string) =>
     safeRequest('resolve_pending_user_action', { session_id: sessionId, reply }),
   )

@@ -122,6 +122,7 @@ class AgentConfig:
     workspace_dir: Path = field(default_factory=lambda: project_path("workspace"))
     max_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MAX_TURNS", "70")))
     min_skill_turns: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_MIN_SKILL_TURNS", "16")))
+    subagent_max_workers: int = field(default_factory=lambda: int(os.getenv("CHRYSALIS_SUBAGENT_MAX_WORKERS", "4")))
     permission_level: str = field(default_factory=lambda: os.getenv("CHRYSALIS_PERMISSION_LEVEL", "balanced"))
 
     def __post_init__(self) -> None:

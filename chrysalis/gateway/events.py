@@ -124,22 +124,33 @@ def build_session_key(
     return ":".join(str(part) for part in parts if part)
 
 
-def build_session_context(source: SessionSource, session_key: str, session_id: str) -> str:
-    lines = [
-        GATEWAY_FIRST_PRINCIPLE,
-        "",
+def build_session_context(
+    source: SessionSource,
+    session_key: str,
+    session_id: str,
+    *,
+    include_first_principle: bool = True,
+) -> str:
+    lines = []
+    if include_first_principle:
+        lines.extend([GATEWAY_FIRST_PRINCIPLE, ""])
+    lines.extend([
         "## Messaging Gateway Context",
         f"Platform: {source.platform}",
         f"Source: {source.description}",
         f"Session key: {session_key}",
         f"Chrysalis session id: {session_id}",
-    ]
+    ])
     if source.user_id:
         lines.append(f"Sender id: {source.user_id}")
     if source.user_name:
         lines.append(f"Sender name: {source.user_name}")
     if source.message_id:
         lines.append(f"Trigger message id: {source.message_id}")
+    lines.append(
+        "To send a local generated image or file back to this chat, include "
+        "[FILE:absolute-or-workspace-path] in the final answer."
+    )
     if source.platform == "qq":
         lines.append("Platform note: Reply concisely. QQ messages may have length limits.")
     elif source.platform == "qq_personal":

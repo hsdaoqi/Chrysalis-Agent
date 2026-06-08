@@ -35,6 +35,7 @@ class AgentLoop:
         history: list[str] | None = None,
         on_stream_chunk: "Callable[[str], None] | None" = None,
         on_tool_call: "Callable[[str, dict, dict | None], None] | None" = None,
+        on_tool_stream: "Callable[[str, dict, str], None] | None" = None,
         on_permission_request: "Callable[[dict], str] | None" = None,
         on_thinking: "Callable[[str], None] | None" = None,
         on_working_change: "Callable[[dict], None] | None" = None,
@@ -54,6 +55,7 @@ class AgentLoop:
         self.progress = progress
         self.on_stream_chunk = on_stream_chunk
         self.on_tool_call = on_tool_call
+        self.on_tool_stream = on_tool_stream
         self.on_permission_request = on_permission_request
         self.on_thinking = on_thinking
         self.on_working_change = on_working_change
@@ -71,6 +73,10 @@ class AgentLoop:
         self.memory_judge = memory_judge or MemoryJudge(llm_factory=self._build_memory_judge_client)
         self._tool_trace: list[dict] = []
         self._cancel_event = threading.Event()
+        self._guidance_lock = threading.Lock()
+        self._pending_guidance: list[str] = []
+        self._current_turn = 0
+        self._resume_state: dict | None = None
 
     def run(
         self,
@@ -78,11 +84,20 @@ class AgentLoop:
         session_context: str = "",
         images: list[dict] | None = None,
         ui_kind: str = "",
+        resume: dict | None = None,
     ) -> dict:
         self._cancel_event.clear()
-        self.working.reset()
-        self._tool_trace = []
+        self._current_turn = 0
+        self._resume_state = None
+        resume_context = ""
+        if resume:
+            resume_context = self._apply_resume_state(resume)
+        else:
+            self.working.reset()
+            self._tool_trace = []
         self.history_info.append(f"[USER]: {brief_text(task, 400)}")
+        if resume_context:
+            session_context = "\n\n".join(part for part in (session_context, resume_context) if part)
 
         before_task = self.hooks.emit("before_task", HookContext(
             event="before_task",
@@ -169,8 +184,84 @@ class AgentLoop:
         if hasattr(self.llm, "cancel"):
             self.llm.cancel()
 
+    def guide(self, text: str) -> bool:
+        guidance = str(text or "").strip()
+        if not guidance:
+            return False
+        with self._guidance_lock:
+            self._pending_guidance.append(guidance)
+        self._emit_trace("guidance_queued", content_preview=brief_text(guidance, 240))
+        return True
+
     def _cancelled_result(self) -> dict:
-        return {"ok": False, "cancelled": True, "final": "任务已中断"}
+        return {
+            "ok": False,
+            "cancelled": True,
+            "final": "任务已中断",
+            "checkpoint": self._build_checkpoint(),
+        }
+
+    def _build_checkpoint(self) -> dict:
+        """构造中断时的续跑状态。不碰文件系统——落盘交给上层（Kernel/SessionStore）。"""
+        return {
+            "working": self.working.to_dict(),
+            "tool_trace": list(self._tool_trace),
+            "history_info": list(self.history_info),
+            "turn": self._current_turn,
+        }
+
+    def _apply_resume_state(self, resume: dict) -> str:
+        """从 checkpoint 还原中断状态，返回注入给模型的「已完成步骤/事实」摘要。"""
+        self._resume_state = resume
+        working = resume.get("working")
+        if isinstance(working, dict):
+            self.working.restore(working)
+        tool_trace = resume.get("tool_trace")
+        self._tool_trace = list(tool_trace) if isinstance(tool_trace, list) else []
+        history_info = resume.get("history_info")
+        if isinstance(history_info, list):
+            # history_info 是 self 与 Kernel 共享的同一个 list，就地替换内容而非换引用
+            self.history_info[:] = [str(line) for line in history_info]
+        return self._resume_summary(resume)
+
+    def _resume_summary(self, resume: dict) -> str:
+        """把已完成的工具调用 / 工作记忆压成一段提示，让模型从断点续跑而非重来。
+
+        最关键的是最后一次工具调用：mid-turn 取消会丢掉它的 tool_result（没存进
+        canonical history），如果不告诉模型它已经跑过，模型会重复执行有副作用的工具。
+        """
+        lines = [
+            "[任务续跑] 这是一个**被中断后继续**的任务，不是新任务。下面是中断前已经完成的工作，",
+            "请从断点继续，不要重新从头开始，尤其不要重复执行已经成功的、有副作用的操作（写文件、跑命令、发消息等）。",
+        ]
+        turn = resume.get("turn")
+        if isinstance(turn, int) and turn > 0:
+            lines.append(f"- 中断时已执行到第 {turn} 轮。")
+
+        trace = resume.get("tool_trace") or []
+        if isinstance(trace, list) and trace:
+            lines.append("- 已执行的工具调用（按顺序）：")
+            for entry in trace[-12:]:
+                if not isinstance(entry, dict):
+                    continue
+                tool = str(entry.get("tool") or "")
+                ok = entry.get("ok")
+                status = "成功" if ok else ("失败" if ok is False else "?")
+                detail = ""
+                if entry.get("path"):
+                    detail = f" -> {entry.get('path')}"
+                elif entry.get("error"):
+                    detail = f" 错误: {brief_text(str(entry.get('error')), 120)}"
+                elif entry.get("content"):
+                    detail = f" -> {brief_text(str(entry.get('content')), 120)}"
+                args = entry.get("args") or {}
+                args_str = brief_text(json.dumps(args, ensure_ascii=False, default=str), 120) if args else ""
+                lines.append(f"  - [{status}] {tool} {args_str}{detail}".rstrip())
+
+        working_prompt = self.working.to_prompt()
+        if working_prompt:
+            lines.append(working_prompt)
+        return "\n".join(lines)
 
     def _run_function_calling(
         self,
@@ -193,6 +284,7 @@ class AgentLoop:
             "meta": _display_meta(task_for_tools or task, ui_kind),
         }]
         for turn in range(1, self.max_turns + 1):
+            self._current_turn = turn
             if self._cancel_event.is_set():
                 return self._cancelled_result()
 
@@ -288,7 +380,7 @@ class AgentLoop:
                 self._append_history_from_action({"final": content}, raw=content)
                 return {"ok": True, "final": content, "agent_turns": turn}
 
-            messages = [{"role": "user", "content": "请继续执行任务或给出最终回答。"}]
+            messages = [{"role": "user", "content": self._next_prompt_with_anchor("请继续执行任务或给出最终回答。")}]
 
         return {"ok": False, "final": "达到最大轮数，仍未得到最终回答。"}
 
@@ -314,6 +406,7 @@ class AgentLoop:
         ]
 
         for turn in range(1, self.max_turns + 1):
+            self._current_turn = turn
             if self._cancel_event.is_set():
                 return self._cancelled_result()
 
@@ -418,7 +511,25 @@ class AgentLoop:
         return prompt
 
     def _next_prompt_with_anchor(self, prompt: str) -> str:
-        return prompt + self._get_anchor_prompt()
+        return prompt + self._pop_guidance_prompt() + self._get_anchor_prompt()
+
+    def _pop_guidance_prompt(self) -> str:
+        with self._guidance_lock:
+            items = [item for item in self._pending_guidance if item.strip()]
+            self._pending_guidance.clear()
+        if not items:
+            return ""
+        joined = "\n".join(f"- {item}" for item in items)
+        summary = " | ".join(items)
+        self.history_info.append(f"[USER guidance] {brief_text(summary, 400)}")
+        self._emit_trace("guidance_applied", count=len(items), content_preview=brief_text(summary, 240))
+        return (
+            "\n\n[USER GUIDANCE WHILE TASK IS RUNNING]\n"
+            "The user added these instructions after the task started. Treat them as the latest direction for the current task. "
+            "Adjust the plan before continuing, and avoid work that conflicts with them.\n"
+            f"{joined}\n"
+            "[/USER GUIDANCE]\n"
+        )
 
     def _handle_agent_tool_side_effects(self, observation: dict) -> None:
         if not isinstance(observation, dict):
@@ -599,7 +710,10 @@ class AgentLoop:
             return {"ok": False, "blocked": True, "error": before_tool.message or "tool stopped by hook"}
 
         try:
-            observation = run_tool(tool_name, args, self.workspace)
+            on_stream = None
+            if self.on_tool_stream is not None:
+                on_stream = lambda chunk: self.on_tool_stream(tool_name, args, chunk)
+            observation = run_tool(tool_name, args, self.workspace, on_stream=on_stream)
         except Exception as exc:
             observation = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
             self.hooks.emit("on_error", HookContext(

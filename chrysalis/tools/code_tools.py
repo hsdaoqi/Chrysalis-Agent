@@ -7,6 +7,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 from configs.config import PROJECT_ROOT, project_path
@@ -20,19 +22,65 @@ from chrysalis.tools.safety import DANGEROUS_CODE_PATTERNS, blocked_shell_patter
     "timeout": "超时秒数(默认30)",
     "cwd": "工作目录(可选)",
 })
-def code_run(args: dict, workspace: Path | None = None) -> dict:
+def code_run(args: dict, workspace: Path | None = None, on_stream: "Callable[[str], None] | None" = None) -> dict:
     code = args.get("script", args.get("code", ""))
     code_type = args.get("type", "python").strip().lower()
     timeout = int(args.get("timeout", 30))
     cwd = args.get("cwd")
 
     if code_type == "python":
-        return _run_python(code, timeout, cwd, workspace)
+        return _run_python(code, timeout, cwd, workspace, on_stream)
     else:
-        return _run_shell(code, code_type, timeout, cwd, workspace)
+        return _run_shell(code, code_type, timeout, cwd, workspace, on_stream)
 
 
-def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None) -> dict:
+def _stream_process(
+    cmd: list[str],
+    cwd: str,
+    timeout: int,
+    env: dict | None,
+    on_stream: "Callable[[str], None] | None",
+) -> tuple[str, int]:
+    """运行子进程，逐行读取 stdout(已合并 stderr)，实时通过 on_stream 回调吐行。
+
+    返回 (合并后的完整输出, 退出码)。超时抛出 subprocess.TimeoutExpired。
+    """
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    chunks: list[str] = []
+
+    def _pump() -> None:
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            chunks.append(line)
+            if on_stream:
+                try:
+                    on_stream(line)
+                except Exception:
+                    pass
+
+    reader = threading.Thread(target=_pump, daemon=True)
+    reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        reader.join(timeout=1)
+        raise
+    reader.join()
+    return "".join(chunks), proc.returncode
+
+
+def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None, on_stream: "Callable[[str], None] | None" = None) -> dict:
     for pattern in DANGEROUS_CODE_PATTERNS:
         if pattern in code:
             return {"ok": False, "error": f"代码包含暂不允许的片段: {pattern}"}
@@ -64,10 +112,9 @@ def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None
     try:
         env = os.environ.copy()
         env["PYTHONIOENCODING"] = "utf-8"
-        proc = subprocess.run(
-            [sys.executable, "-X", "utf8", str(script)],
-            cwd=str(base), capture_output=True, text=True, timeout=timeout,
-            encoding="utf-8", errors="replace", env=env,
+        output, returncode = _stream_process(
+            [sys.executable, "-X", "utf8", "-u", str(script)],
+            cwd=str(base), timeout=timeout, env=env, on_stream=on_stream,
         )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"代码执行超时: {timeout} 秒"}
@@ -77,10 +124,9 @@ def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None
         except OSError:
             pass
 
-    stdout = proc.stdout.strip()
-    stderr = proc.stderr.strip()
-    if proc.returncode != 0:
-        return {"ok": False, "error": stderr or stdout or f"退出码: {proc.returncode}"}
+    stdout = output.strip()
+    if returncode != 0:
+        return {"ok": False, "error": stdout or f"退出码: {returncode}"}
 
     parsed = _parse_last_json_line(stdout)
     if parsed is not None:
@@ -89,7 +135,7 @@ def _run_python(code: str, timeout: int, cwd: str | None, workspace: Path | None
     return {"ok": True, "stdout": stdout}
 
 
-def _run_shell(command: str, shell_type: str, timeout: int, cwd: str | None, workspace: Path | None) -> dict:
+def _run_shell(command: str, shell_type: str, timeout: int, cwd: str | None, workspace: Path | None, on_stream: "Callable[[str], None] | None" = None) -> dict:
     if not command:
         return {"ok": False, "error": "command 不能为空"}
     blocked = blocked_shell_pattern(command)
@@ -105,15 +151,17 @@ def _run_shell(command: str, shell_type: str, timeout: int, cwd: str | None, wor
         cmd = ["powershell", "-NoProfile", "-NonInteractive", "-Command", command]
 
     try:
-        proc = subprocess.run(cmd, cwd=str(base), capture_output=True, timeout=timeout)
+        output, returncode = _stream_process(
+            cmd, cwd=str(base), timeout=timeout, env=None, on_stream=on_stream,
+        )
     except subprocess.TimeoutExpired:
         return {"ok": False, "error": f"shell 命令执行超时: {timeout} 秒"}
 
     return {
-        "ok": proc.returncode == 0,
-        "exit_code": proc.returncode,
-        "stdout": _decode_process_output(proc.stdout).strip()[:20_000],
-        "stderr": _decode_process_output(proc.stderr).strip()[:5_000],
+        "ok": returncode == 0,
+        "exit_code": returncode,
+        "stdout": output.strip()[:20_000],
+        "stderr": "",
     }
 
 

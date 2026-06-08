@@ -74,7 +74,9 @@ class Kernel:
         if llm and not llm._on_history_changed:
             llm._on_history_changed = self.session_store.save
         self.pending_user_action: dict | None = None  # 记录 ask_user 等待用户操作后的续跑状态
+        self.resume_state: dict | None = None  # 任务被中断后，注入此处用于从断点续跑
         self._resume_prompt_internal = False
+        self.on_subagent_event = None  # 子任务实时事件回调，由桌面运行时按 session 注入
         self.history: list[str] = []  # 轻量 session anchor 文本历史
         self.loop = AgentLoop(  # 真正执行观察-行动循环的 AgentLoop
             self.llm,
@@ -93,6 +95,7 @@ class Kernel:
         subagent.configure(
             session_config=self.config.llm.to_session_config(),
             progress=self.progress,
+            max_workers=self.config.subagent_max_workers,
         )
 
     def _create_permission_engine(self) -> PermissionEngine:
@@ -120,16 +123,29 @@ class Kernel:
         ui_kind = "continue_prompt" if self._resume_prompt_internal else ""
         self._resume_prompt_internal = False
         merged_context = "\n\n".join(part for part in (session_context, extra_context) if part)
+        resume = self.resume_state
+        self.resume_state = None
+        if resume:
+            ui_kind = "continue_prompt"
         self._progress(f"开始任务：{run_task}")
 
+        bind_token = subagent.bind_run(progress=self.progress, on_subagent_event=self.on_subagent_event)
         try:
-            result = self.loop.run(run_task, session_context=merged_context, images=images, ui_kind=ui_kind)
+            result = self.loop.run(
+                run_task,
+                session_context=merged_context,
+                images=images,
+                ui_kind=ui_kind,
+                resume=resume,
+            )
         except Exception as exc:
             result = {
                 "ok": False,
                 "error": str(exc),
                 "final": f"任务执行异常：{exc}",
             }
+        finally:
+            subagent.unbind_run(bind_token)
         if result.get("need_user"):
             self.pending_user_action = {
                 "task": run_task,
@@ -137,6 +153,7 @@ class Kernel:
                 "reason": result.get("reason", "need_user"),
                 "result": result,
             }
+        self._persist_checkpoint(result, run_task)
 
         result["elapsed_ms"] = _elapsed_ms(started)
         elapsed = result["elapsed_ms"]
@@ -153,6 +170,41 @@ class Kernel:
             self.loop.cancel()
         if hasattr(self.llm, "cancel"):
             self.llm.cancel()
+
+    def _persist_checkpoint(self, result: dict, task: str) -> None:
+        """任务被中断且带 checkpoint 时落盘；其余情况清掉旧 checkpoint。"""
+        session_id = self.session_store.current_id or ""
+        if not session_id:
+            return
+        checkpoint = result.get("checkpoint") if isinstance(result, dict) else None
+        if result.get("cancelled") and isinstance(checkpoint, dict):
+            checkpoint = dict(checkpoint)
+            checkpoint["task"] = task
+            self.session_store.save_checkpoint(session_id, checkpoint)
+            result["resumable"] = True
+            result.pop("checkpoint", None)  # 已落盘，无需随事件回传整份状态
+        else:
+            # 正常完成 / need_user / 异常：丢弃此前的断点，避免续跑到陈旧状态
+            self.session_store.delete_checkpoint(session_id)
+
+    def has_checkpoint(self, session_id: str | None = None) -> bool:
+        sid = session_id or self.session_store.current_id or ""
+        return self.session_store.has_checkpoint(sid)
+
+    def resume(self, session_context: str = "") -> dict:
+        """从当前会话的 checkpoint 续跑。无 checkpoint 时返回错误结果。"""
+        session_id = self.session_store.current_id or ""
+        checkpoint = self.session_store.load_checkpoint(session_id) if session_id else None
+        if not checkpoint:
+            return {"ok": False, "error": "no_checkpoint", "final": "没有可续跑的断点。"}
+        task = str(checkpoint.get("task") or "").strip() or "继续之前被中断的任务"
+        self.resume_state = checkpoint
+        return self.run(task, session_context=session_context)
+
+    def guide(self, text: str) -> bool:
+        if hasattr(self.loop, "guide"):
+            return bool(self.loop.guide(text))
+        return False
 
     @property
     def active_model_name(self) -> str:
@@ -261,6 +313,7 @@ class Kernel:
             self.llm.session.history.clear()
         self.history.clear()
         self.pending_user_action = None
+        self.resume_state = None
         return self.session_store.new_session(model=self.active_model_name)
 
     def list_sessions(self) -> list[dict]:

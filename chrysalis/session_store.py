@@ -113,7 +113,7 @@ class SessionStore:
 
     def list_sessions(self, limit: int = 20) -> list[dict]:
         files = sorted(
-            self.sessions_dir.glob("*.json"),
+            (f for f in self.sessions_dir.glob("*.json") if not f.name.endswith(".checkpoint.json")),
             key=_session_sort_key,
             reverse=True,
         )
@@ -137,9 +137,64 @@ class SessionStore:
         path = self._session_path(session_id)
         if path.exists():
             path.unlink()
+            self.delete_checkpoint(session_id)
             if self._current_id == session_id:
                 self._current_id = None
             return True
+        return False
+
+    # ── Checkpoint（任务断点续跑）──
+
+    def _checkpoint_path(self, session_id: str) -> Path:
+        return self.sessions_dir / f"{session_id}.checkpoint.json"
+
+    def save_checkpoint(self, session_id: str, checkpoint: dict) -> None:
+        """把中断时的续跑状态落盘。整体重写，原子替换。"""
+        if not session_id:
+            return
+        data = {
+            "session_id": session_id,
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+            "checkpoint": checkpoint,
+        }
+        path = self._checkpoint_path(session_id)
+        tmp_path = path.with_suffix(".tmp")
+        try:
+            tmp_path.write_text(json.dumps(data, ensure_ascii=False, default=str), encoding="utf-8")
+            os.replace(tmp_path, path)
+        except OSError:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def load_checkpoint(self, session_id: str) -> dict | None:
+        """读出续跑状态；不存在或损坏返回 None。"""
+        if not session_id:
+            return None
+        path = self._checkpoint_path(session_id)
+        if not path.exists():
+            return None
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+        checkpoint = data.get("checkpoint") if isinstance(data, dict) else None
+        return checkpoint if isinstance(checkpoint, dict) else None
+
+    def has_checkpoint(self, session_id: str) -> bool:
+        return bool(session_id) and self._checkpoint_path(session_id).exists()
+
+    def delete_checkpoint(self, session_id: str) -> bool:
+        if not session_id:
+            return False
+        path = self._checkpoint_path(session_id)
+        if path.exists():
+            try:
+                path.unlink()
+                return True
+            except OSError:
+                return False
         return False
 
     def rename(self, session_id: str, title: str) -> bool:

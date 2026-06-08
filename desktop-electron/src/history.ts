@@ -40,6 +40,8 @@ const INTERNAL_PROMPT_PREFIXES = [
   'Self-check failed.',
 ]
 
+const ORPHANED_TOOL_RESULT_PREFIX = '[orphaned tool result converted to text]'
+
 export function normalizeHistory(history: CanonicalMessage[]): ViewMessage[] {
   const messages: MutableViewMessage[] = []
   const pendingTools = new Map<number, PendingToolCard>()
@@ -56,6 +58,23 @@ export function normalizeHistory(history: CanonicalMessage[]): ViewMessage[] {
     const displayText = messageDisplayText(message)
 
     if (role === 'user') {
+      if (isOrphanedToolResultText(displayText || rawText || joinBlockText(blocks))) {
+        const toolText = normalizeToolResultText(displayText || rawText || joinBlockText(blocks))
+        if (toolText) {
+          messages.push({
+            id: `orphaned-tool-result-${messages.length}`,
+            kind: 'tool',
+            role: 'assistant',
+            title: 'Tool Result',
+            body: compactText(stripOrphanedToolResultPrefix(toolText), 180),
+            meta: 'done',
+            status: 'done',
+            details: [toolText],
+          })
+        }
+        return
+      }
+
       const toolResultBlocks = blocks.filter((block) => String(block.type || '').toLowerCase() === 'tool_result')
       if (toolResultBlocks.length > 0) {
         toolResultBlocks.forEach((block) => {
@@ -533,6 +552,18 @@ function isInternalPromptText(text: string): boolean {
     return true
   }
   return normalized.includes('Review turn:') && normalized.includes('Current answer:')
+}
+
+function isOrphanedToolResultText(text: string): boolean {
+  return normalizeLineBreaks(text).trim().startsWith(ORPHANED_TOOL_RESULT_PREFIX)
+}
+
+function stripOrphanedToolResultPrefix(text: string): string {
+  const normalized = normalizeLineBreaks(text).trim()
+  if (!normalized.startsWith(ORPHANED_TOOL_RESULT_PREFIX)) {
+    return normalized
+  }
+  return normalized.slice(ORPHANED_TOOL_RESULT_PREFIX.length).trim()
 }
 
 function messageDisplayText(message: CanonicalMessage): string {

@@ -40,6 +40,7 @@ class BaseSession:
         self.compaction = CompactionManager(config)
         self._lock = threading.Lock()
         self._cancel_event = threading.Event()
+        self.on_preflight_trace = None
 
     def ask(self, message: dict, cancel_event: threading.Event | None = None) -> Generator[str, None, Response]:
         """
@@ -67,6 +68,8 @@ class BaseSession:
             )
             # 建立历史快照，防止在流式输出时 history 被其他线程修改
             history_snapshot = [dict(m) for m in self.history]
+            if self.on_preflight_trace is not None:
+                self.on_preflight_trace(history_snapshot)
 
         # 2. 如果需要总结，则在此处执行“后台总结任务”
         if llm_summary_request:
@@ -79,6 +82,8 @@ class BaseSession:
                 # 总结完成后，再次执行预检并更新快照
                 self.compaction.apply_preflight(self.history, system=self.system, tools=self.tools)
                 history_snapshot = [dict(m) for m in self.history]
+                if self.on_preflight_trace is not None:
+                    self.on_preflight_trace(history_snapshot)
 
         # 3. 发送给 LLM 并获取流式响应（带有被动防御机制）
         response = yield from self._ask_with_reactive_retry(history_snapshot, cancel)

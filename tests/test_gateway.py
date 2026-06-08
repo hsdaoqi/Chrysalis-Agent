@@ -196,12 +196,14 @@ def test_gateway_payload_ignores_attachments_outside_media_roots(tmp_path: Path)
 
 
 def test_gateway_binding_uses_remote_permission_engine(tmp_path: Path) -> None:
+    # feishu 是不可信的远程网关，应使用受限的权限引擎和裁剪后的工具集。
     service = GatewayService(config=_test_config(tmp_path))
-    source = SessionSource(platform="qq", chat_id="u1")
+    source = SessionSource(platform="feishu", chat_id="u1")
 
     binding = service._binding_for(source)
     tool_names = {item["function"]["name"] for item in binding.kernel.loop.tools_schema}
 
+    assert binding.trusted_host is False
     assert isinstance(binding.kernel.permission_engine, GatewayPermissionEngine)
     assert isinstance(binding.kernel.loop.permission_engine, GatewayPermissionEngine)
     assert binding.kernel.loop.system_prompt_preamble == GATEWAY_FIRST_PRINCIPLE
@@ -210,6 +212,20 @@ def test_gateway_binding_uses_remote_permission_engine(tmp_path: Path) -> None:
     assert "code_run" not in tool_names
     assert "web_scan" not in tool_names
     assert "web_execute_js" not in tool_names
+
+
+def test_gateway_binding_trusts_host_platform(tmp_path: Path) -> None:
+    # qq 是可信宿主网关，应保留完整工具集和默认权限引擎，不套用远程网关的限制。
+    service = GatewayService(config=_test_config(tmp_path))
+    source = SessionSource(platform="qq", chat_id="u1")
+
+    binding = service._binding_for(source)
+
+    assert binding.trusted_host is True
+    assert not isinstance(binding.kernel.permission_engine, GatewayPermissionEngine)
+    assert not isinstance(binding.kernel.loop.permission_engine, GatewayPermissionEngine)
+    assert binding.kernel.loop.system_prompt_preamble != GATEWAY_FIRST_PRINCIPLE
+    assert binding.kernel.loop.tools_schema is None
 
 
 def test_qq_extracts_file_info_from_wrapped_upload_response() -> None:
