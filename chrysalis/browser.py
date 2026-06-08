@@ -41,6 +41,7 @@ DEFAULT_BRIDGE_FILES = (
     ".tmp/browser_bridge.json",
 )
 DEFAULT_BRIDGE_URLS = (
+    "http://127.0.0.1:18765",  # chrysalis_browser_bridge / tmwd_cdp_bridge 扩展
     "http://127.0.0.1:17321",
     "http://127.0.0.1:17322",
 )
@@ -52,6 +53,8 @@ BRIDGE_HEALTH_MARKERS = {
     "browser-extension",
 }
 IGNORED_TAGS = {"script", "style", "noscript", "meta", "link", "svg", "canvas", "template"}
+# void/自闭合元素：无结束标签，不能参与 _ignored_depth 计数，否则后续正文会被整段吞掉
+VOID_IGNORED_TAGS = {"meta", "link"}
 USER_ACTION_PATTERNS = (
     "请先登录",
     "登录后查看",
@@ -250,6 +253,7 @@ class BrowserController:
         }
 
     def _ensure_browser(self, initial_url: str | None = None) -> dict:
+        self._autostart_bridge()
         bridge = self._discover_plugin_bridge()
         if bridge is not None:
             self.backend = BACKEND_PLUGIN
@@ -301,7 +305,12 @@ class BrowserController:
                 tabs = self._tabs()
                 if tabs:
                     self.active_tab_id = tabs[0]["id"]
-                return {"ok": True, "backend": BACKEND_CDP, "opened_with_launch": bool(initial_url)}
+                return {
+                    "ok": True,
+                    "backend": BACKEND_CDP,
+                    "opened_with_launch": bool(initial_url),
+                    "note": self._extension_hint(),
+                }
             time.sleep(0.2)
         return {
             "ok": False,
@@ -309,6 +318,39 @@ class BrowserController:
             "error": "浏览器已启动，但 CDP 调试端口没有及时响应。",
             "port": self.port,
         }
+
+    def _extension_hint(self) -> str | None:
+        """当桥接服务在跑但扩展没连时，返回一句安装指引；否则 None。"""
+        try:
+            from chrysalis.browser_bridge import DEFAULT_HOST, DEFAULT_PORT, is_running
+        except Exception:
+            return None
+        if not is_running(DEFAULT_HOST, DEFAULT_PORT):
+            return None
+        # 服务在跑却走到了 CDP 启动新浏览器，说明扩展没连上
+        return (
+            "当前控制的是临时空白浏览器（无你的登录态）。要接管你日常的浏览器，"
+            "请在浏览器里安装 assets/tmwd_cdp_bridge 扩展（开发者模式→加载已解压的扩展），"
+            "装好后扩展会自动连接，下次即可控制你已打开的浏览器。"
+        )
+
+    def _autostart_bridge(self) -> None:
+        """在发现插件桥接前，按需后台拉起本地桥接服务。
+
+        桥接服务一旦在跑，只要用户安装的扩展已连上，就能接管真实浏览器。
+        这一步只负责把服务起来；扩展是否连接由 _bridge_available 的 /health 决定。
+        失败（如端口被占）时静默跳过，回退到 CDP 路径。
+        """
+        if os.environ.get("CHRYSALIS_BROWSER_NO_AUTOSTART"):
+            return
+        try:
+            from chrysalis.browser_bridge import DEFAULT_HOST, DEFAULT_PORT, ensure_running
+        except Exception:
+            return
+        try:
+            ensure_running(DEFAULT_HOST, DEFAULT_PORT, wait=1.5)
+        except Exception:
+            pass
 
     def _cdp_available(self) -> bool:
         try:
@@ -587,6 +629,9 @@ class _HTMLSummaryParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = {key.lower(): value or "" for key, value in attrs}
         tag = tag.lower()
+        if tag in VOID_IGNORED_TAGS:
+            # 跳过其内容标记，但不增加深度（它们没有结束标签）
+            return
         if tag in IGNORED_TAGS:
             self._ignored_depth += 1
             return

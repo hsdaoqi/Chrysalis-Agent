@@ -23,8 +23,19 @@ class FailoverSession(BaseSession):
         self._switched_at = 0.0
         self.config = sessions[0].config
         self._lock = __import__("threading").Lock()
+        self._on_preflight_trace = None
         for s in self.sessions:
             s.config.max_retries = 3
+
+    @property
+    def on_preflight_trace(self):
+        return self._on_preflight_trace
+
+    @on_preflight_trace.setter
+    def on_preflight_trace(self, value) -> None:
+        self._on_preflight_trace = value
+        for session in self.sessions:
+            session.on_preflight_trace = value
 
     @property
     def system(self) -> str:

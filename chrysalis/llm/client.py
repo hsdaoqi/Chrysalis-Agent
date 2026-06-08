@@ -16,7 +16,7 @@ from typing import Callable, Generator
 
 from chrysalis.llm.logger import write_llm_log
 from chrysalis.llm.session import BaseSession
-from chrysalis.llm.context import estimate_request_cost
+from chrysalis.llm.context import estimate_request_cost, estimate_request_tokens
 from chrysalis.llm.types import Response, Usage
 from chrysalis.llm.usage import UsageTracker
 
@@ -82,7 +82,12 @@ class LLMClient:
 
         call_id = uuid.uuid4().hex
         started = time.perf_counter()
-        self._emit_trace("llm_start", self._llm_trace_start_payload(call_id, canonical_message, turn))
+        self.session.on_preflight_trace = (
+            lambda history_snapshot: self._emit_trace(
+                "llm_start",
+                self._llm_trace_start_payload(call_id, canonical_message, turn, history_snapshot=history_snapshot),
+            )
+        )
 
         gen = self.session.ask(canonical_message, cancel_event=cancel)
         response: Response | None = None
@@ -94,6 +99,9 @@ class LLMClient:
                     self.session.cancel()
         except StopIteration as e:
             response = e.value
+        finally:
+            if hasattr(self.session, "on_preflight_trace"):
+                self.session.on_preflight_trace = None
 
         if response is None:
             response = Response(content="!!!Error: 未收到响应", raw="")
@@ -197,13 +205,23 @@ class LLMClient:
         except Exception:
             pass
 
-    def _llm_trace_start_payload(self, call_id: str, canonical_message: dict, turn: int | None = None) -> dict:
+    def _llm_trace_start_payload(
+        self,
+        call_id: str,
+        canonical_message: dict,
+        turn: int | None = None,
+        *,
+        history_snapshot: list[dict] | None = None,
+    ) -> dict:
         session = self._active_session()
-        history = list(getattr(session, "history", []) or [])
+        history = list(history_snapshot if history_snapshot is not None else getattr(session, "history", []) or [])
         system = getattr(session, "system", "") or ""
         tools = getattr(session, "tools", None)
         config = session.config
-        chars = estimate_request_cost(history + [canonical_message], system=system, tools=tools)
+        includes_current_message = history_snapshot is not None
+        request_history = history if includes_current_message else history + [canonical_message]
+        chars = estimate_request_cost(request_history, system=system, tools=tools)
+        tokens = estimate_request_tokens(request_history, system=system, tools=tools)
         blocks: dict[str, int] = {}
         for block in canonical_message.get("blocks", []):
             if isinstance(block, dict):
@@ -216,9 +234,9 @@ class LLMClient:
             "protocol": config.protocol,
             "context": {
                 "chars": chars,
-                "tokens_estimate": max(1, chars // 3),
+                "tokens_estimate": tokens,
                 "context_window": config.context_window,
-                "messages": len(history) + 1,
+                "messages": len(request_history),
                 "blocks": blocks,
                 "tools": len(tools or []),
             },
@@ -278,6 +296,7 @@ class LLMClient:
         compaction = getattr(session, "compaction", None)
 
         chars = estimate_request_cost(history, system=system, tools=tools)
+        tokens = estimate_request_tokens(history, system=system, tools=tools)
         budget_chars = max(1, config.context_window * 3)
         soft_chars = int(budget_chars * getattr(config, "compression_soft_limit_ratio", 0.70))
         hard_chars = int(budget_chars * getattr(config, "compression_hard_limit_ratio", 0.90))
@@ -292,10 +311,10 @@ class LLMClient:
         stats = getattr(compaction, "last_stats", None)
         result = {
             "chars": chars,
-            "tokens_estimate": max(1, chars // 3),
+            "tokens_estimate": tokens,
             "budget_chars": budget_chars,
             "context_window": config.context_window,
-            "ratio": min(1.0, chars / budget_chars),
+            "ratio": min(1.0, tokens / max(1, config.context_window)),
             "soft_chars": soft_chars,
             "hard_chars": hard_chars,
             "soft_ratio": soft_chars / budget_chars,

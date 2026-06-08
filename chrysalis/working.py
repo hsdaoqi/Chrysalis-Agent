@@ -35,6 +35,17 @@ class TodoItem:
 DONE_STATUSES = {"completed", "complete", "done", "satisfied", "passed", "verified", "waived", "skipped"}
 
 
+def _next_id_seed(items: list[Any], prefix: str) -> int:
+    """根据已还原的 item id（形如 prefix_N）推出下一个可用的计数起点。"""
+    highest = 0
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d+)$")
+    for item in items:
+        match = pattern.match(str(getattr(item, "id", "")))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
 def _normalize_status(value: Any, default: str = "pending") -> str:
     text = str(value or default).strip().lower().replace(" ", "_").replace("-", "_")
     if not text:
@@ -680,6 +691,72 @@ class WorkingMemory:
             if self.rounds_since_plan:
                 data["rounds_since_plan"] = self.rounds_since_plan
         return data
+
+    def to_dict(self) -> dict:
+        """完整序列化为可 JSON 化的 dict，供 checkpoint 落盘。
+
+        与 snapshot()/state_snapshot() 不同：这里**无损**保存全部字段（含为空的、
+        round 计数、各 reminder interval），用于 restore() 精确还原中断时的工作记忆。
+        """
+        return {
+            "key_info": self.key_info,
+            "related_sop": self.related_sop,
+            "long_term_update_requested": self.long_term_update_requested,
+            "todo_goal": self.todo_goal,
+            "todos": [
+                {"id": item.id, "title": item.title, "status": item.status, "note": item.note}
+                for item in self.todos
+            ],
+            "plan_goal": self.plan_goal,
+            "plan_status": self.plan_status,
+            "plan_summary": self.plan_summary,
+            "plan_steps": [item.to_dict() for item in self.plan_steps],
+            "plan_acceptance_criteria": [item.to_dict() for item in self.plan_acceptance_criteria],
+            "plan_evidence": list(self.plan_evidence),
+            "plan_blocker": self.plan_blocker,
+            "rounds_since_todo": self.rounds_since_todo,
+            "rounds_since_plan": self.rounds_since_plan,
+            "touched": self._touched,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "WorkingMemory":
+        memory = cls()
+        memory.restore(data)
+        return memory
+
+    def restore(self, data: dict) -> None:
+        """从 to_dict() 的结果完整还原工作记忆（就地修改 self）。"""
+        if not isinstance(data, dict):
+            return
+        self.key_info = str(data.get("key_info") or "")
+        self.related_sop = str(data.get("related_sop") or "")
+        self.long_term_update_requested = str(data.get("long_term_update_requested") or "")
+        self.todo_goal = str(data.get("todo_goal") or "")
+        self.todos = [
+            TodoItem.from_value(value, f"todo_{index + 1}")
+            for index, value in enumerate(data.get("todos") or [])
+        ]
+        self.plan_goal = str(data.get("plan_goal") or "")
+        self.plan_status = str(data.get("plan_status") or "")
+        self.plan_summary = str(data.get("plan_summary") or "")
+        self.plan_steps = [
+            PlanItem.from_value(value, f"step_{index + 1}")
+            for index, value in enumerate(data.get("plan_steps") or [])
+        ]
+        self.plan_acceptance_criteria = [
+            PlanItem.from_value(value, f"criteria_{index + 1}")
+            for index, value in enumerate(data.get("plan_acceptance_criteria") or [])
+        ]
+        self.plan_evidence = [str(item) for item in (data.get("plan_evidence") or []) if str(item).strip()]
+        self.plan_blocker = str(data.get("plan_blocker") or "")
+        self.rounds_since_todo = int(data.get("rounds_since_todo") or 0)
+        self.rounds_since_plan = int(data.get("rounds_since_plan") or 0)
+        self._touched = bool(data.get("touched", False))
+        # id 种子续接到已有 item 之后，避免新建 item 与还原的 item 撞 id
+        self._todo_id_seed = count(_next_id_seed(self.todos, "todo"))
+        self._plan_step_id_seed = count(_next_id_seed(self.plan_steps, "step"))
+        self._plan_criterion_id_seed = count(_next_id_seed(self.plan_acceptance_criteria, "criteria"))
 
     def to_prompt(self) -> str:
         snapshot = self.snapshot()

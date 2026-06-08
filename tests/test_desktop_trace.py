@@ -80,7 +80,7 @@ def test_electron_runtime_gateway_statuses(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("CHRYSALIS_QQ_APP_ID", raising=False)
     monkeypatch.delenv("CHRYSALIS_QQ_APP_SECRET", raising=False)
     monkeypatch.delenv("CHRYSALIS_ONEBOT_WS_URL", raising=False)
-    monkeypatch.setattr("chrysalis.electron_runtime.missing_gateway_dependencies", lambda platforms: [])
+    monkeypatch.setattr("chrysalis.electron_runtime.gateway.missing_gateway_dependencies", lambda platforms: [])
 
     runtime = ElectronRuntime.__new__(ElectronRuntime)
     runtime._gateway_lock = threading.RLock()
@@ -156,7 +156,7 @@ def test_electron_runtime_approves_sop_memory_as_skill_note(tmp_path: Path) -> N
 
 
 def test_electron_runtime_reads_gateway_activity(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr("chrysalis.electron_runtime.missing_gateway_dependencies", lambda platforms: [])
+    monkeypatch.setattr("chrysalis.electron_runtime.gateway.missing_gateway_dependencies", lambda platforms: [])
     store = GatewayActivityStore(tmp_path / "gateway_activity.json")
     store.start_task(
         task_id="gateway-task-1",

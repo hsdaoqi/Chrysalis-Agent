@@ -34,6 +34,17 @@ import {
 } from 'lucide-react'
 import { ProseMirrorComposer } from './editor/ProseMirrorComposer'
 import { normalizeHistory } from './history'
+import { composeDisplayTask, filterSessions, hasTodoSnapshot, mergeLiveContextUsage, parseBtwCommand, roleLabel, statusLabel, stripAnsi, todoItemActive, todoItemStatusClass } from './lib/misc'
+import { PERMISSION_LEVEL_OPTIONS, createSettingsForm, normalizePermissionLevel, permissionLevelLabel, settingsPayload } from './lib/settings'
+import { addCacheUsageSummary, attachCacheUsageToMessages, buildCacheUsageByTask, cacheUsageForTurn, cacheUsageHasData, compareTraceNodes, emptyCacheUsageSummary, formatCacheHitRate, formatCacheTitle, formatTurnCacheLabel, getTodoSnapshot, groupTraceByTask, normalizeTraceNode, sameTraceNodes, summarizeCacheUsage, summarizeTrace, traceAssemblyLine, traceBlockLine, traceCacheLine, traceContextLine, traceDetails, traceKindClass, traceNodeCacheUsage, traceNodeTaskId, tracePlanLine, traceShortTaskId, traceSubtitle, traceTaskLabel, traceTaskStatus, traceTaskSubtitle, traceTitle, traceTodoLine, traceUsageAndCacheLine, traceUsageLine, traceUsageTotal } from './lib/trace'
+import { MEMORY_TARGET_OPTIONS, createReviewEditState, normalizedReviewSummary, reviewItemSummary, reviewItemTitle, reviewQualityLine, reviewStatusLabel, reviewSummaryCards, reviewTargetLabel } from './lib/review'
+import { gatewayActivityEvents, gatewayCompleteLiveTool, gatewayCopyText, gatewayEventMessageId, gatewayEventTurn, gatewayLiveStateFromActivity, gatewayMessageId, gatewayStatusClass, gatewayStatusDetail, gatewayStatusLabel, gatewayUserTitle } from './lib/gateway'
+import { createPendingRequest, dedupePendingChoices, extractInlinePendingChoices, pendingChoices, permissionSummary } from './lib/pending'
+import { contextAssemblyDetailText, contextAssemblyLine, contextAssemblySections, contextRecallItemLine, contextSectionBudgetLine, contextSectionReason, contextSectionRecallItems } from './lib/context'
+import { PENDING_TASK_ID, countConversationTurns, countMissingLiveConversationTurns, countViewChatMessages, countViewConversationTurns, createMessageId, filterVisibleChatMessages, historyTurnEndIndex, isLiveFileChangeAnchorMessage, isTurnProcessMessage, liveDiffTaskIds, liveFileChangeAnchorMessages, liveMessageBelongsToTask, liveMessagesForCurrentTask, liveTaskEventApplies, liveTaskIdForEvent, mergeHistoryAndLiveMessages, mergeLiveSessionSummaries, normalizeLiveTaskId, normalizeViewMessageBody, readCanonicalText, streamPreviewText, stripSummaryMarkup, tagLiveMessageTask, tagPendingLiveMessages, trimLiveStreamBuffer, viewMessageDedupKey, viewMessagesEqual } from './lib/messages'
+import { buildCronSchedule, buildCronSpec, createCronForm, createCronFormFromJob, cronDaemonLabel, cronIntervalFormValues, cronIntervalUnitLabel, cronJobNotice, cronJobStatus, cronLastStatusLabel, cronScheduleLabel, normalizeCronDateTimeInput, normalizeCronIntervalUnit, parseCronContext, positiveCronNumber, toLocalDateTimeValue } from './lib/cron'
+import type { CacheUsageByTask, CacheUsageByTurn, CronFormState, LiveSessionState, PendingChoice, PendingRequestState, ReviewEditState, SettingsFormState, TraceDetail, TraceSummary, TraceTaskGroup } from './app-types'
+import { buildFileChange, clampNumber, compactText, diffStats, fileChangeKey, fileChangeTotals, fileNameFromPath, formatBytes, formatCompactCount, formatCost, formatFileChangeBody, formatFileChangeSummary, formatMs, formatReviewTime, formatSessionAge, formatTimestamp, formatTraceTime, isRecord, parseFloatOrFallback, parseIntOrFallback, stringifyValue, toTraceNumber } from './lib/format'
 import type {
   AttachmentSummary,
   CacheUsageSummary,
@@ -75,25 +86,7 @@ type Page = 'chat' | 'settings' | 'cron' | 'reviews' | 'gateway'
 type InspectorMode = 'context' | 'trace'
 type ReviewFilter = 'pending' | 'all' | 'approved' | 'discarded'
 
-interface SettingsFormState {
-  enabled: boolean
-  name: string
-  provider: string
-  apiKey: string
-  baseUrl: string
-  model: string
-  wireApi: string
-  contextWindow: string
-  temperature: string
-  maxTokens: string
-  maxRetries: string
-  timeout: string
-  proxy: string
-  thinking: string
-  thinkingBudget: string
-  systemPrompt: string
-  permissionLevel: PermissionLevel
-}
+
 
 interface RenameState {
   open: boolean
@@ -101,35 +94,9 @@ interface RenameState {
   title: string
 }
 
-interface CronFormState {
-  id: string
-  name: string
-  scheduleType: 'once' | 'periodic'
-  period: string
-  runAt: string
-  time: string
-  startAt: string
-  weekday: string
-  day: string
-  month: string
-  intervalCount: string
-  intervalUnit: 'minutes' | 'hours' | 'days' | 'weeks' | 'months' | 'years'
-  prompt: string
-  script: string
-  noAgent: boolean
-  contextFrom: string
-  workdir: string
-  repeatTimes: string
-  maxDelayMinutes: string
-}
 
-interface ReviewEditState {
-  itemId: string
-  title: string
-  target: string
-  description: string
-  content: string
-}
+
+
 
 interface GrowthNoticeState {
   id: string
@@ -146,58 +113,26 @@ interface GatewayLogState {
   path: string
 }
 
-interface PendingChoice {
-  label: string
-  value: string
-  description: string
-}
 
-interface PendingRequestState {
-  id: string
+
+
+
+
+
+
+
+
+
+
+
+interface HistoryCacheState {
   sessionId: string
-  kind: 'ask_user' | 'permission'
-  title: string
-  question: string
-  summary: string
-  tool: string
-  risk: string
-  reason: string
-  choices: PendingChoice[]
-}
-
-interface LiveSessionState {
+  signature: string
   messages: ViewMessage[]
-  streamBuffer: string
-  turn: number | null
-  taskId: string
-  started: boolean
-  pausedForUser?: boolean
 }
 
-interface TraceSummary {
-  modelCalls: number
-  tools: number
-  permissions: number
-  tokens: number
-  cost: number
-  elapsedMs: number
-}
 
-interface TraceDetail {
-  label: string
-  value: string
-}
 
-interface TraceTaskGroup {
-  id: string
-  label: string
-  subtitle: string
-  status: 'running' | 'done' | 'error' | 'waiting'
-  nodes: TraceEventNode[]
-}
-
-type CacheUsageByTurn = Map<number, CacheUsageSummary>
-type CacheUsageByTask = Map<string, CacheUsageByTurn>
 
 type ResizeEdge = 'left' | 'right'
 
@@ -228,11 +163,6 @@ const WORKSPACE_RESIZE_LIMITS = {
   centerMin: 480,
 }
 
-const PERMISSION_LEVEL_OPTIONS: Array<{ value: PermissionLevel; label: string }> = [
-  { value: 'balanced', label: '默认权限' },
-  { value: 'locked', label: '自动审查' },
-  { value: 'full', label: '完全访问权限' },
-]
 
 const WIRE_API_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'chat', label: 'chat' },
@@ -291,1078 +221,161 @@ const REVIEW_FILTERS: Array<{ value: ReviewFilter; label: string }> = [
   { value: 'discarded', label: '已丢弃' },
 ]
 
-const MEMORY_TARGET_OPTIONS = [
-  { value: 'fact', label: '项目事实' },
-  { value: 'user_profile', label: '用户偏好' },
-  { value: 'sop', label: 'SOP/技能笔记' },
-]
-
-function createReviewEditState(item?: ReviewItem | null): ReviewEditState {
-  return {
-    itemId: item?.id || '',
-    title: item?.title || '',
-    target: item?.target || item?.category || '',
-    description: item?.description || '',
-    content: item?.content || item?.body || '',
-  }
-}
-
-function normalizePermissionLevel(value: unknown): PermissionLevel {
-  const normalized = String(value || '').trim().toLowerCase()
-  if (normalized === 'locked' || normalized === 'balanced' || normalized === 'full') {
-    return normalized
-  }
-  if (normalized === 'strict' || normalized === 'safe' || normalized === 'ask') {
-    return 'locked'
-  }
-  if (normalized === 'trusted' || normalized === 'off' || normalized === 'none') {
-    return 'full'
-  }
-  return 'balanced'
-}
-
-function permissionLevelLabel(level: PermissionLevel): string {
-  return PERMISSION_LEVEL_OPTIONS.find((option) => option.value === level)?.label || 'Balanced'
-}
-
-function getTodoSnapshot(working: WorkingSnapshot): WorkingTodoSnapshot {
-  if (working.todo) {
-    return working.todo
-  }
-  return {
-    goal: working.todo_goal || '',
-    rounds_since_todo: working.rounds_since_todo,
-    todo_reminder_interval: working.todo_reminder_interval,
-    total_count: working.total_count,
-    pending_count: working.pending_count,
-    completed_count: working.completed_count,
-    todos: working.todos || [],
-    active_todo_id: working.active_todo_id || '',
-    active_todo_title: working.active_todo_title || '',
-  }
-}
-
-function hasTodoSnapshot(todo: WorkingTodoSnapshot): boolean {
-  return Boolean(todo.goal || (todo.todos && todo.todos.length > 0))
-}
-
-function todoItemStatusClass(status: string): string {
-  const normalized = status.trim().toLowerCase().replace(/[\s-]+/g, '_')
-  if (['completed', 'done'].includes(normalized)) {
-    return 'done'
-  }
-  if (normalized === 'blocked') {
-    return 'blocked'
-  }
-  if (normalized === 'active' || normalized === 'in_progress') {
-    return 'active'
-  }
-  return 'pending'
-}
-
-function todoItemActive(item: WorkingTodoItem, activeId: string): boolean {
-  return item.id === activeId
-}
-
-function toLocalDateTimeValue(date: Date): string {
-  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000)
-  return local.toISOString().slice(0, 16)
-}
-
-function createCronForm(): CronFormState {
-  const now = new Date()
-  const later = new Date(now.getTime() + 15 * 60_000)
-  return {
-    id: '',
-    name: '',
-    scheduleType: 'once',
-    period: 'daily',
-    runAt: toLocalDateTimeValue(later),
-    time: `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`,
-    startAt: toLocalDateTimeValue(now),
-    weekday: '1',
-    day: '1',
-    month: '1',
-    intervalCount: '1',
-    intervalUnit: 'minutes',
-    prompt: '',
-    script: '',
-    noAgent: false,
-    contextFrom: '',
-    workdir: '',
-    repeatTimes: '',
-    maxDelayMinutes: '',
-  }
-}
-
-const CRON_CALENDAR_PERIODS = new Set(['daily', 'weekly', 'monthly', 'yearly'])
-const CRON_INTERVAL_PERIOD_UNITS: Record<string, CronFormState['intervalUnit']> = {
-  everyminute: 'minutes',
-  everyminutes: 'minutes',
-  everyhour: 'hours',
-  everyhours: 'hours',
-  everyday: 'days',
-  everydaily: 'days',
-  everyweek: 'weeks',
-  everyweekly: 'weeks',
-  everymonth: 'months',
-  everymonthly: 'months',
-  everyyear: 'years',
-  everyyearly: 'years',
-}
-
-function normalizeCronDateTimeInput(value: unknown, fallback: string): string {
-  const text = String(value ?? '').trim()
-  return text ? text.slice(0, 16) : fallback
-}
-
-function normalizeCronIntervalUnit(value: unknown): CronFormState['intervalUnit'] {
-  const text = String(value || '').trim().toLowerCase()
-  if (text === 'hours' || text === 'days' || text === 'weeks' || text === 'months' || text === 'years') {
-    return text
-  }
-  return 'minutes'
-}
-
-function positiveCronNumber(value: unknown, fallback: number): number {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
-function cronIntervalFormValues(schedule: CronSchedule): Pick<CronFormState, 'intervalCount' | 'intervalUnit'> {
-  const periodKey = String(schedule.period || '').trim().toLowerCase().replace(/[_-]+/g, '')
-  let unit = CRON_INTERVAL_PERIOD_UNITS[periodKey] || normalizeCronIntervalUnit(schedule.interval_unit)
-  let count = positiveCronNumber(schedule.interval_count ?? schedule.every ?? schedule.n, 1)
-
-  if (schedule.every_hours !== null && schedule.every_hours !== undefined) {
-    unit = 'hours'
-    count = positiveCronNumber(schedule.every_hours, 1)
-  } else if (schedule.every_days !== null && schedule.every_days !== undefined) {
-    unit = 'days'
-    count = positiveCronNumber(schedule.every_days, 1)
-  } else if (schedule.every_minutes !== null && schedule.every_minutes !== undefined) {
-    const minutes = positiveCronNumber(schedule.every_minutes, 1)
-    if (minutes % 1440 === 0) {
-      unit = 'days'
-      count = minutes / 1440
-    } else if (minutes % 60 === 0) {
-      unit = 'hours'
-      count = minutes / 60
-    } else {
-      unit = 'minutes'
-      count = minutes
-    }
-  }
-
-  return {
-    intervalCount: String(Math.max(1, Math.round(count))),
-    intervalUnit: unit,
-  }
-}
-
-function createCronFormFromJob(job: CronJob): CronFormState {
-  const base = createCronForm()
-  const schedule = job.schedule || {}
-  const contextFrom = Array.isArray(job.context_from) ? job.context_from.join(', ') : ''
-  const form: CronFormState = {
-    ...base,
-    id: job.id || '',
-    name: job.name || '',
-    prompt: job.prompt || '',
-    script: job.script || '',
-    noAgent: Boolean(job.no_agent),
-    contextFrom,
-    workdir: job.workdir || '',
-    repeatTimes: job.repeat?.times === null || job.repeat?.times === undefined ? '' : String(job.repeat.times),
-    maxDelayMinutes: job.max_delay_minutes === null || job.max_delay_minutes === undefined ? '' : String(job.max_delay_minutes),
-  }
-
-  if (schedule.type === 'once') {
-    return {
-      ...form,
-      scheduleType: 'once',
-      runAt: normalizeCronDateTimeInput(schedule.run_at, base.runAt),
-    }
-  }
-
-  if (schedule.type === 'periodic') {
-    const period = String(schedule.period || 'daily').trim().toLowerCase()
-    const isCalendarPeriod = CRON_CALENDAR_PERIODS.has(period)
-    const intervalValues = isCalendarPeriod ? null : cronIntervalFormValues(schedule)
-    return {
-      ...form,
-      scheduleType: 'periodic',
-      period: isCalendarPeriod ? period : 'interval',
-      time: String(schedule.time || base.time),
-      startAt: normalizeCronDateTimeInput(schedule.start_at, base.startAt),
-      weekday: String(schedule.weekday ?? base.weekday),
-      day: String(schedule.day ?? base.day),
-      month: String(schedule.month ?? base.month),
-      intervalCount: intervalValues?.intervalCount || base.intervalCount,
-      intervalUnit: intervalValues?.intervalUnit || base.intervalUnit,
-    }
-  }
-
-  return form
-}
-
-function parseCronContext(value: string): string[] {
-  return value
-    .split(/[,\n]/)
-    .map((item) => item.trim())
-    .filter(Boolean)
-}
-
-function cronScheduleLabel(schedule?: CronSchedule): string {
-  if (!schedule) {
-    return '未设置'
-  }
-  if (schedule.type === 'once') {
-    return `一次 · ${schedule.run_at || '-'}`
-  }
-  const period = String(schedule.period || 'periodic')
-  if (period === 'daily') {
-    return `每天 · ${schedule.time || '-'}`
-  }
-  if (period === 'weekly') {
-    return `每周 · ${schedule.weekday || '-'} · ${schedule.time || '-'}`
-  }
-  if (period === 'monthly') {
-    return `每月 · ${schedule.day || '-'} · ${schedule.time || '-'}`
-  }
-  if (period === 'yearly') {
-    return `每年 · ${schedule.month || '-'}/${schedule.day || '-'} · ${schedule.time || '-'}`
-  }
-  if (period === 'interval') {
-    const count = schedule.interval_count ?? schedule.every_minutes ?? schedule.every_hours ?? schedule.every_days ?? schedule.every ?? schedule.n ?? '-'
-    const unit = cronIntervalUnitLabel(schedule.interval_unit || 'minutes')
-    return `每隔 · ${count} ${unit}`
-  }
-  if (period.startsWith('every')) {
-    const unit = cronIntervalUnitLabel({
-      everyminute: 'minutes',
-      everyhour: 'hours',
-      everyday: 'days',
-      everyweek: 'weeks',
-      everymonth: 'months',
-      everyyear: 'years',
-    }[period] || schedule.interval_unit || 'minutes')
-    const count = schedule.interval_count ?? schedule.every_minutes ?? schedule.every_hours ?? schedule.every_days ?? schedule.every ?? schedule.n ?? 1
-    return `每隔 · ${count} ${unit}`
-  }
-  return String(schedule.period || 'periodic')
-}
-
-function cronDaemonLabel(daemon?: CronDaemonSnapshot): string {
-  if (!daemon?.running) {
-    return '守护进程已停止'
-  }
-  return `运行中 · ${daemon.interval_seconds ?? 60}s`
-}
-
-function cronIntervalUnitLabel(unit?: string | null): string {
-  if (unit === 'minutes') {
-    return '分钟'
-  }
-  if (unit === 'hours') {
-    return '小时'
-  }
-  if (unit === 'days') {
-    return '天'
-  }
-  if (unit === 'weeks') {
-    return '周'
-  }
-  if (unit === 'months') {
-    return '月'
-  }
-  if (unit === 'years') {
-    return '年'
-  }
-  return unit || ''
-}
-
-function cronLastStatusLabel(status?: string | null): string {
-  if (!status) {
-    return '-'
-  }
-  if (status === 'ok') {
-    return '已完成'
-  }
-  if (status === 'error') {
-    return '失败'
-  }
-  if (status === 'missed') {
-    return '已错过'
-  }
-  if (status === 'running') {
-    return '运行中'
-  }
-  return status
-}
-
-function cronJobStatus(job: CronJob): string {
-  const state = job.state || {}
-  if (state.running) {
-    return '运行中'
-  }
-  if (job.enabled === false) {
-    return '已停用'
-  }
-  if (state.last_status === 'error') {
-    return '失败'
-  }
-  if (state.last_status === 'missed') {
-    return '已错过'
-  }
-  if (state.last_status === 'ok') {
-    return '已完成'
-  }
-  return '待命'
-}
-
-function cronJobNotice(message: string, job?: CronJob | null): string {
-  const path = String(job?.path || '').trim()
-  return path ? `${message}，配置已写入 ${path}` : message
-}
-
-function gatewayStatusLabel(status?: GatewayStatus): string {
-  if (status === 'running') {
-    return '运行中'
-  }
-  if (status === 'failed') {
-    return '连接失败'
-  }
-  if (status === 'configured') {
-    return '已配置'
-  }
-  return '未配置'
-}
-
-function gatewayStatusClass(status?: GatewayStatus): string {
-  if (status === 'running') {
-    return 'running'
-  }
-  if (status === 'failed') {
-    return 'failed'
-  }
-  if (status === 'configured') {
-    return 'configured'
-  }
-  return 'not-configured'
-}
-
-function gatewayStatusDetail(platform: GatewayPlatformSnapshot): string {
-  if (platform.running && platform.pid) {
-    return `PID ${platform.pid}`
-  }
-  if (platform.status === 'failed') {
-    return platform.last_error || platform.install_hint || '最近一次启动失败'
-  }
-  if (platform.status === 'not_configured') {
-    return platform.configuration_error || platform.config_summary || '需要补充连接配置'
-  }
-  return platform.config_summary || platform.launch_platform || ''
-}
-
-function gatewayCopyText(platform: GatewayPlatformSnapshot): string {
-  const diagnostics = [
-    platform.last_error,
-    platform.configuration_error,
-    platform.install_hint,
-  ].filter(Boolean)
-  if (diagnostics.length === 0) {
-    return ''
-  }
-  return [
-    ...diagnostics,
-    platform.command ? `Command: ${platform.command}` : '',
-    platform.log_file ? `Log: ${platform.log_file}` : '',
-  ].filter(Boolean).join('\n')
-}
-
-function buildCronSchedule(form: CronFormState): CronSchedule {
-  if (form.scheduleType === 'once') {
-    return {
-      type: 'once',
-      run_at: form.runAt.trim(),
-    }
-  }
-
-  if (form.period === 'daily' || form.period === 'weekly' || form.period === 'monthly' || form.period === 'yearly') {
-    const schedule: CronSchedule = {
-      type: 'periodic',
-      period: form.period,
-      time: form.time.trim(),
-      start_at: form.startAt.trim(),
-    }
-    if (form.period === 'weekly') {
-      schedule.weekday = form.weekday.trim() || '1'
-    } else if (form.period === 'monthly') {
-      schedule.day = parseIntOrFallback(form.day, 1)
-    } else if (form.period === 'yearly') {
-      schedule.month = parseIntOrFallback(form.month, 1)
-      schedule.day = parseIntOrFallback(form.day, 1)
-    }
-    return schedule
-  }
-
-  const count = Math.max(1, parseIntOrFallback(form.intervalCount, 1))
-  const intervalPeriod = {
-    minutes: 'everyminute',
-    hours: 'everyhour',
-    days: 'everyday',
-    weeks: 'everyweek',
-    months: 'everymonth',
-    years: 'everyyear',
-  }[form.intervalUnit]
-  const schedule: CronSchedule = {
-    type: 'periodic',
-    period: intervalPeriod,
-    start_at: form.startAt.trim(),
-  }
-  if (form.intervalUnit === 'minutes') {
-    schedule.every_minutes = count
-  } else if (form.intervalUnit === 'hours') {
-    schedule.every_hours = count
-  } else if (form.intervalUnit === 'days') {
-    schedule.every_days = count
-  } else {
-    schedule.every = count
-    schedule.n = count
-  }
-  return schedule
-}
-
-function buildCronSpec(form: CronFormState): CronJobCreateSpec {
-  return {
-    id: form.id.trim() || undefined,
-    name: form.name.trim() || undefined,
-    schedule: buildCronSchedule(form),
-    prompt: form.noAgent ? '' : form.prompt,
-    script: form.script || undefined,
-    no_agent: form.noAgent,
-    context_from: parseCronContext(form.contextFrom),
-    workdir: form.workdir.trim() || undefined,
-    repeat_times: form.repeatTimes.trim().length > 0 ? parseIntOrFallback(form.repeatTimes, 0) : null,
-    max_delay_minutes: form.maxDelayMinutes.trim().length > 0 ? parseIntOrFallback(form.maxDelayMinutes, 0) : null,
-  }
-}
-
-function createSettingsForm(settings?: SettingsSnapshot): SettingsFormState {
-  const llm = settings?.llm || {}
-  return {
-    enabled: settings?.enabled ?? false,
-    name: llm.name || '',
-    provider: llm.provider || 'openai',
-    apiKey: llm.api_key || '',
-    baseUrl: llm.base_url || '',
-    model: llm.model || '',
-    wireApi: llm.wire_api || 'chat',
-    contextWindow: String(llm.context_window ?? 28000),
-    temperature: String(llm.temperature ?? 0.2),
-    maxTokens: llm.max_tokens === null || llm.max_tokens === undefined ? '' : String(llm.max_tokens),
-    maxRetries: String(llm.max_retries ?? 4),
-    timeout: String(llm.timeout ?? 60),
-    proxy: llm.proxy || '',
-    thinking: llm.thinking || 'disabled',
-    thinkingBudget: llm.thinking_budget === null || llm.thinking_budget === undefined ? '' : String(llm.thinking_budget),
-    systemPrompt: settings?.system_prompt || '',
-    permissionLevel: normalizePermissionLevel(settings?.permission_level),
-  }
-}
-
-function settingsPayload(form: SettingsFormState): Record<string, unknown> {
-  return {
-    enabled: form.enabled,
-    permission_level: form.permissionLevel,
-    llm: {
-      name: form.name,
-      provider: form.provider,
-      api_key: form.apiKey,
-      base_url: form.baseUrl,
-      model: form.model,
-      wire_api: form.wireApi,
-      context_window: parseIntOrFallback(form.contextWindow, 28000),
-      temperature: parseFloatOrFallback(form.temperature, 0.2),
-      max_tokens: form.maxTokens.trim().length > 0 ? parseIntOrFallback(form.maxTokens, 0) : null,
-      max_retries: parseIntOrFallback(form.maxRetries, 4),
-      timeout: parseIntOrFallback(form.timeout, 60),
-      proxy: form.proxy,
-      thinking: form.thinking,
-      thinking_budget: form.thinkingBudget.trim().length > 0 ? parseIntOrFallback(form.thinkingBudget, 0) : null,
-    },
-    system_prompt: form.systemPrompt,
-  }
-}
-
-function composeDisplayTask(task: string, attachments: AttachmentSummary[]): string {
-  const cleanTask = task.trim()
-  if (attachments.length === 0) {
-    return cleanTask
-  }
-  const lines = [cleanTask || 'Task with attachments', '', 'Attachments:']
-  attachments.forEach((attachment) => {
-    lines.push(`- ${attachment.name} (${attachment.kind})`)
-  })
-  return lines.join('\n').trim()
-}
-
-function filterSessions(sessions: SessionSummary[], query: string): SessionSummary[] {
-  const terms = query
-    .trim()
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(Boolean)
-  if (terms.length === 0) {
-    return sessions
-  }
-  return sessions.filter((session) => {
-    const haystack = [session.id, session.title, session.model, session.updated_at].join(' ').toLowerCase()
-    return terms.every((term) => haystack.includes(term))
-  })
-}
-
-const PROCESS_MESSAGE_KINDS = new Set<ViewMessage['kind']>([
-  'tool',
-  'thinking',
-  'info',
-  'status',
-  'usage',
-  'warning',
-  'system',
-])
-const PENDING_TASK_ID = 'pending'
-
-function isTurnProcessMessage(message: ViewMessage): boolean {
-  if (PROCESS_MESSAGE_KINDS.has(message.kind)) {
-    return true
-  }
-  return message.kind === 'error' && message.title.trim().toLowerCase().startsWith('turn ')
-}
-
-function filterVisibleChatMessages(messages: ViewMessage[], showTurnMessages: boolean): ViewMessage[] {
-  return messages.filter((message) => {
-    if (!message.body.trim()) {
-      return false
-    }
-    if (message.meta === 'pending_user') {
-      return false
-    }
-    if (isTurnProcessMessage(message)) {
-      return showTurnMessages
-    }
-    if (message.kind === 'diff') {
-      return true
-    }
-    if (message.kind === 'user' || message.kind === 'assistant') {
-      return true
-    }
-    if (message.kind === 'error') {
-      return true
-    }
-    return false
-  })
-}
-
-function mergeHistoryAndLiveMessages(historyMessages: ViewMessage[], liveMessages: ViewMessage[]): ViewMessage[] {
-  const historyUsers = new Set(
-    historyMessages
-      .filter((message) => message.kind === 'user' && message.body.trim())
-      .map((message) => viewMessageDedupKey(message)),
-  )
-  const filteredLiveMessages = liveMessages.filter((message) => {
-    if (message.kind !== 'user') {
-      return true
-    }
-    return !historyUsers.has(viewMessageDedupKey(message))
-  })
-  return [...historyMessages, ...filteredLiveMessages]
-}
-
-function gatewayLiveStateFromActivity(activity: GatewayActivity): { sessionId: string; state: LiveSessionState } | null {
-  const sessionId = stringifyValue(activity.session_id).trim()
-  const taskId = normalizeLiveTaskId(activity.task_id)
-  if (!sessionId || !taskId) {
-    return null
-  }
-
-  const messages: ViewMessage[] = []
-  const userBody = stringifyValue(activity.task_preview).trim()
-  if (userBody) {
-    messages.push({
-      id: gatewayMessageId(taskId, 'user'),
-      kind: 'user',
-      role: 'user',
-      title: gatewayUserTitle(activity),
-      body: userBody,
-      turn: 1,
-      taskId,
-    })
-  }
-
-  let latestTurn = Math.max(0, toTraceNumber(activity.turn))
-  const events = gatewayActivityEvents(activity)
-  events.forEach((event, index) => {
-    const kind = stringifyValue(event.kind).trim()
-    if (kind === 'tool_started') {
-      const turn = gatewayEventTurn(event, latestTurn + 1)
-      latestTurn = Math.max(latestTurn, turn)
-      const tool = stringifyValue(event.tool || 'tool').trim() || 'tool'
-      const argsText = stringifyValue(event.args).trim()
-      const thoughtText = stringifyValue(event.thought).trim()
-      messages.push({
-        id: gatewayEventMessageId(event, taskId, index, 'tool-started'),
-        kind: 'tool',
-        role: 'assistant',
-        title: `Turn ${turn} - running ${tool} ...`,
-        body: compactText(argsText, 160) || 'Args pending',
-        details: [
-          ...(thoughtText ? [`Thought:\n${thoughtText}`] : []),
-          ...(argsText ? [`Args:\n${argsText}`] : []),
-        ],
-        meta: 'running',
-        status: 'running',
-        turn,
-        taskId,
-      })
-      return
-    }
-    if (kind === 'tool_completed') {
-      const turn = gatewayEventTurn(event, latestTurn)
-      latestTurn = Math.max(latestTurn, turn)
-      gatewayCompleteLiveTool(messages, event, taskId, index, turn)
-    }
-  })
-
-  const streamBuffer = trimLiveStreamBuffer(stringifyValue(activity.stream))
-  const streamPreview = streamPreviewText(streamBuffer)
-  if (streamPreview) {
-    messages.push({
-      id: gatewayMessageId(taskId, 'stream'),
-      kind: 'assistant',
-      role: 'assistant',
-      title: 'Assistant',
-      body: streamPreview,
-      streaming: true,
-      turn: latestTurn || undefined,
-      taskId,
-    })
-  }
-
-  return {
-    sessionId,
-    state: {
-      messages,
-      streamBuffer,
-      turn: latestTurn || null,
-      taskId,
-      started: true,
-    },
-  }
-}
-
-function gatewayActivityEvents(activity: GatewayActivity): GatewayActivityEvent[] {
-  return Array.isArray(activity.events)
-    ? activity.events.filter((event): event is GatewayActivityEvent => isRecord(event))
-    : []
-}
-
-function gatewayUserTitle(activity: GatewayActivity): string {
-  const platform = stringifyValue(activity.platform || '').trim()
-  const source = isRecord(activity.source) ? activity.source : {}
-  const label = stringifyValue(source.description || source.chat_name || source.user_name || '').trim()
-  return [platform ? platform.toUpperCase() : 'Gateway', label].filter(Boolean).join(' · ')
-}
-
-function gatewayEventTurn(event: GatewayActivityEvent, fallback: number): number {
-  const turn = toTraceNumber(event.turn)
-  return turn > 0 ? turn : Math.max(1, fallback)
-}
-
-function gatewayMessageId(taskId: string, suffix: string): string {
-  return `gateway-${taskId}-${suffix}`
-}
-
-function gatewayEventMessageId(event: GatewayActivityEvent, taskId: string, index: number, suffix: string): string {
-  const eventId = stringifyValue(event.id).trim()
-  return eventId ? `gateway-${eventId}` : `gateway-${taskId}-${index}-${suffix}`
-}
-
-function gatewayCompleteLiveTool(
-  messages: ViewMessage[],
-  event: GatewayActivityEvent,
-  taskId: string,
-  index: number,
-  turn: number,
-): void {
-  const tool = stringifyValue(event.tool || 'tool').trim() || 'tool'
-  const observationText = stringifyValue(event.observation).trim()
-  for (let messageIndex = messages.length - 1; messageIndex >= 0; messageIndex -= 1) {
-    const item = messages[messageIndex]
-    if (item.kind !== 'tool' || item.status !== 'running' || item.turn !== turn) {
-      continue
-    }
-    const details = Array.isArray(item.details) ? [...item.details] : []
-    details.push(`Observation:\n${observationText || 'No observation'}`)
-    messages[messageIndex] = {
-      ...item,
-      title: `Turn ${turn} - ok ${tool} - ${compactText(observationText || 'done', 48)}`,
-      body: compactText(observationText || item.body || 'No observation', 180),
-      details,
-      meta: 'done',
-      status: 'done',
-      taskId,
-    }
-    return
-  }
-  messages.push({
-    id: gatewayEventMessageId(event, taskId, index, 'tool-completed'),
-    kind: 'tool',
-    role: 'assistant',
-    title: `Turn ${turn} - ok ${tool} - ${compactText(observationText || 'done', 48)}`,
-    body: compactText(observationText || 'No observation', 180),
-    details: observationText ? [`Observation:\n${observationText}`] : [],
-    meta: 'done',
-    status: 'done',
-    turn,
-    taskId,
-  })
-}
-
-function liveMessagesForCurrentTask(live: LiveSessionState): ViewMessage[] {
-  const taskId = normalizeLiveTaskId(live.taskId)
-  if (!taskId) {
-    return live.messages.filter((message) => (
-      message.meta !== 'pending_user' && (live.started || !isTurnProcessMessage(message))
-    ))
-  }
-  const hasTaggedCurrentMessages = live.messages.some((message) => {
-    const messageTaskId = normalizeLiveTaskId(message.taskId)
-    return Boolean(messageTaskId && liveMessageBelongsToTask(message, taskId))
-  })
-  return live.messages.filter((message) => {
-    if (message.meta === 'pending_user') {
-      return false
-    }
-    if (message.kind === 'diff') {
-      return true
-    }
-    const messageTaskId = normalizeLiveTaskId(message.taskId)
-    if (!messageTaskId) {
-      return !hasTaggedCurrentMessages
-    }
-    return liveMessageBelongsToTask(message, taskId)
-  })
-}
-
-function liveMessageBelongsToTask(message: ViewMessage, taskId: string): boolean {
-  const currentTaskId = normalizeLiveTaskId(taskId)
-  const messageTaskId = normalizeLiveTaskId(message.taskId)
-  if (!currentTaskId) {
-    return !messageTaskId
-  }
-  if (!messageTaskId) {
-    return false
-  }
-  if (currentTaskId === PENDING_TASK_ID) {
-    return messageTaskId === PENDING_TASK_ID
-  }
-  return messageTaskId === currentTaskId || messageTaskId === PENDING_TASK_ID
-}
-
-function liveTaskEventApplies(current: LiveSessionState, taskId: string): boolean {
-  const incomingTaskId = normalizeLiveTaskId(taskId)
-  const currentTaskId = normalizeLiveTaskId(current.taskId)
-  if (!incomingTaskId) {
-    return true
-  }
-  if (!currentTaskId) {
-    return current.started
-  }
-  return currentTaskId === PENDING_TASK_ID || currentTaskId === incomingTaskId
-}
-
-function liveTaskIdForEvent(current: LiveSessionState, taskId: string): string {
-  return normalizeLiveTaskId(taskId) || normalizeLiveTaskId(current.taskId)
-}
-
-function tagLiveMessageTask(message: ViewMessage, taskId: string): ViewMessage {
-  const normalized = normalizeLiveTaskId(taskId)
-  if (!normalized || normalizeLiveTaskId(message.taskId) === normalized) {
-    return message
-  }
-  return {
-    ...message,
-    taskId: normalized,
-  }
-}
-
-function normalizeLiveTaskId(value: unknown): string {
-  return String(value || '').trim()
-}
-
-function viewMessageDedupKey(message: ViewMessage): string {
-  return [
-    message.kind,
-    message.turn ?? '',
-    normalizeViewMessageBody(message.body),
-  ].join('\u0000')
-}
-
-function normalizeViewMessageBody(body: string): string {
-  return body.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim()
-}
-
-function viewMessagesEqual(left: ViewMessage[], right: ViewMessage[]): boolean {
-  if (left.length !== right.length) {
-    return false
-  }
-  return left.every((leftMessage, index) => {
-    const rightMessage = right[index]
-    return Boolean(rightMessage)
-      && leftMessage.id === rightMessage.id
-      && leftMessage.kind === rightMessage.kind
-      && leftMessage.title === rightMessage.title
-      && leftMessage.body === rightMessage.body
-      && leftMessage.turn === rightMessage.turn
-      && leftMessage.taskId === rightMessage.taskId
-      && leftMessage.meta === rightMessage.meta
-      && leftMessage.status === rightMessage.status
-      && leftMessage.streaming === rightMessage.streaming
-      && JSON.stringify(leftMessage.details || []) === JSON.stringify(rightMessage.details || [])
-  })
-}
-
-function countViewConversationTurns(messages: ViewMessage[]): number {
-  return (messages || []).filter((message) => message.kind === 'user' && message.body.trim()).length
-}
-
-function countMissingLiveConversationTurns(
-  activeHistory: RuntimeSnapshot['history'],
-  liveMessages: ViewMessage[],
-): number {
-  const historyTurns = countConversationTurns(activeHistory || [])
-  return (liveMessages || []).filter((message) => {
-    if (message.kind !== 'user' || !message.body.trim()) {
-      return false
-    }
-    return !message.turn || message.turn > historyTurns
-  }).length
-}
-
-function mergeLiveSessionSummaries(
-  sessions: SessionSummary[],
-  liveSessions: Record<string, LiveSessionState>,
-  activeSessionId: string,
-  activeHistory: RuntimeSnapshot['history'],
-): SessionSummary[] {
-  const activeTurns = countConversationTurns(activeHistory || [])
-  const activeLiveMissingTurns = countMissingLiveConversationTurns(
-    activeHistory || [],
-    activeSessionId ? liveSessions[activeSessionId]?.messages || [] : [],
-  )
-  return sessions.map((session) => {
-    const live = liveSessions[session.id]
-    const liveTurns = session.id === activeSessionId
-      ? activeLiveMissingTurns
-      : countViewConversationTurns(live?.messages || [])
-    const turns = session.id === activeSessionId
-      ? Math.max(Number(session.turns || 0), activeTurns + liveTurns)
-      : Math.max(Number(session.turns || 0), liveTurns)
-    if (!live && turns === session.turns) {
-      return session
-    }
-    return {
-      ...session,
-      turns,
-      busy: Boolean(session.busy || live?.taskId),
-      task_id: live?.taskId || session.task_id,
-    }
-  })
-}
-
-function formatTimestamp(value: string): string {
-  if (!value) {
-    return ''
-  }
-  if (value.includes('T')) {
-    return value.replace('T', ' ').slice(0, 16)
-  }
-  return value
-}
-
-function formatSessionAge(value: string): string {
-  if (!value) {
-    return ''
-  }
-  const normalized = value.includes('T') ? value : value.replace(' ', 'T')
-  const timestamp = new Date(normalized).getTime()
-  if (!Number.isFinite(timestamp)) {
-    return formatTimestamp(value)
-  }
-  const elapsedMs = Math.max(0, Date.now() - timestamp)
-  const minutes = Math.floor(elapsedMs / 60_000)
-  if (minutes < 1) {
-    return '刚刚'
-  }
-  if (minutes < 60) {
-    return `${minutes}分`
-  }
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) {
-    return `${hours}时`
-  }
-  const days = Math.floor(hours / 24)
-  if (days < 30) {
-    return `${days}天`
-  }
-  const months = Math.floor(days / 30)
-  if (months < 12) {
-    return `${months}月`
-  }
-  return `${Math.floor(months / 12)}年`
-}
-
-function formatBytes(size: string | number): string {
-  const value = typeof size === 'number' ? size : Number(size) || 0
-  const units = ['B', 'KB', 'MB', 'GB']
-  let current = Math.max(0, value)
-  for (let index = 0; index < units.length; index += 1) {
-    if (current < 1024 || index === units.length - 1) {
-      return index === 0 ? `${Math.trunc(current)} ${units[index]}` : `${current.toFixed(1)} ${units[index]}`
-    }
-    current /= 1024
-  }
-  return `${Math.trunc(value)} B`
-}
-
-function formatCompactCount(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0'
-  }
-  if (value >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(value >= 10_000_000 ? 0 : 1)}m`
-  }
-  if (value >= 1_000) {
-    return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}k`
-  }
-  return String(Math.round(value))
-}
-
-function stringifyValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return value
-  }
-  if (value == null) {
-    return ''
-  }
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
-}
-
-function compactText(value: unknown, limit: number): string {
-  const text = stringifyValue(value)
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/\s+/g, ' ')
-    .trim()
-  if (text.length <= limit) {
-    return text
-  }
-  return `${text.slice(0, Math.max(0, limit - 3)).trimEnd()}...`
-}
-
-const LIVE_STREAM_BUFFER_LIMIT = 12_000
-const LIVE_STREAM_PREVIEW_LIMIT = 2_200
-
-function trimLiveStreamBuffer(text: string): string {
-  if (text.length <= LIVE_STREAM_BUFFER_LIMIT) {
-    return text
-  }
-  return text.slice(-LIVE_STREAM_BUFFER_LIMIT)
-}
-
-function streamPreviewText(value: string): string {
-  const text = stripSummaryMarkup(value)
-  if (text.length <= LIVE_STREAM_PREVIEW_LIMIT) {
-    return text.trim()
-  }
-  return `...\n${text.slice(-LIVE_STREAM_PREVIEW_LIMIT).trimStart()}`
-}
-
-function fileNameFromPath(path: string): string {
-  const cleanPath = String(path || '').trim()
-  if (!cleanPath) {
-    return 'unknown'
-  }
-  const parts = cleanPath.replace(/\\/g, '/').split('/').filter(Boolean)
-  return parts[parts.length - 1] || cleanPath
-}
-
-function fileChangeKey(path: string): string {
-  return String(path || '').replace(/\\/g, '/').trim().toLowerCase()
-}
-
-function diffStats(diffText: string): { added: number; removed: number } {
-  return String(diffText || '').split(/\r?\n/).reduce((total, line) => {
-    if (line.startsWith('+++') || line.startsWith('---')) {
-      return total
-    }
-    if (line.startsWith('+')) {
-      return { ...total, added: total.added + 1 }
-    }
-    if (line.startsWith('-')) {
-      return { ...total, removed: total.removed + 1 }
-    }
-    return total
-  }, { added: 0, removed: 0 })
-}
-
-function buildFileChange(path: string, diffText: string): FileChangeSummary {
-  const stats = diffStats(diffText)
-  const cleanPath = String(path || 'unknown').trim() || 'unknown'
-  return {
-    path: cleanPath,
-    name: fileNameFromPath(cleanPath),
-    diff: String(diffText || ''),
-    added: stats.added,
-    removed: stats.removed,
-  }
-}
-
-function fileChangeTotals(changes: FileChangeSummary[]): { added: number; removed: number } {
-  return changes.reduce((total, change) => ({
-    added: total.added + Math.max(0, change.added || 0),
-    removed: total.removed + Math.max(0, change.removed || 0),
-  }), { added: 0, removed: 0 })
-}
-
-function formatFileChangeSummary(changes: FileChangeSummary[]): string {
-  const count = changes.length
-  const noun = count === 1 ? '个文件' : '个文件'
-  return `已编辑 ${count} ${noun}`
-}
-
-function formatFileChangeBody(changes: FileChangeSummary[]): string {
-  if (changes.length === 0) {
-    return ''
-  }
-  return changes
-    .map((change) => `${change.name}  +${change.added || 0} -${change.removed || 0}`)
-    .join('\n')
-}
-
-function clampNumber(value: number, min: number, max: number): number {
-  return Math.min(Math.max(value, min), Math.max(min, max))
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value))
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function createGrowthNotice(summary: unknown, taskId = ''): GrowthNoticeState | null {
   if (!isRecord(summary) || !summary.has_candidates) {
@@ -1392,763 +405,101 @@ function createGrowthNotice(summary: unknown, taskId = ''): GrowthNoticeState | 
   }
 }
 
-function normalizedReviewSummary(item: ReviewItem): ReviewSummary {
-  const summary = item.review_summary || {}
-  const tools = Array.isArray(summary.tools) && summary.tools.length > 0
-    ? summary.tools.map((tool) => stringifyValue(tool).trim()).filter(Boolean)
-    : Array.isArray(item.tools)
-      ? item.tools.map((tool) => stringifyValue(tool).trim()).filter(Boolean)
-      : []
-  return {
-    why: compactText(item.why || summary.why || item.reason || item.description || '', 260),
-    save_as: compactText(item.save_as || summary.save_as || reviewTargetLabel(item), 240),
-    reuse: compactText(item.reuse || summary.reuse || '', 280),
-    risk: compactText(item.risk || summary.risk || '', 240),
-    quality: compactText(summary.quality || reviewQualityLine(item), 220),
-    next_action: compactText(summary.next_action || '', 180),
-    tools,
-  }
-}
 
-function reviewQualityLine(item: ReviewItem): string {
-  const validation = isRecord(item.validation) ? item.validation : {}
-  const status = stringifyValue(validation.status || item.skill_status || '').trim()
-  const score = toTraceNumber(validation.score)
-  const issues = Array.isArray(validation.issues)
-    ? validation.issues.map((issue) => stringifyValue(issue).trim()).filter(Boolean)
-    : []
-  const parts = [
-    item.kind === 'skill' ? (status ? `validation ${status}` : 'skill note candidate') : 'memory candidate',
-    score > 0 ? `score ${score}` : '',
-    issues.length > 0 ? issues.slice(0, 3).join(', ') : '',
-  ].filter(Boolean)
-  return parts.join(' - ')
-}
 
-function reviewSummaryCards(item: ReviewItem): Array<{ label: string; value: string; tone: string }> {
-  const summary = normalizedReviewSummary(item)
-  return [
-    { label: '为什么保存', value: summary.why || '这个候选来自任务结束后的记忆/技能笔记判断。', tone: 'why' },
-    { label: '保存成什么', value: summary.save_as || reviewTargetLabel(item), tone: 'save' },
-    { label: '以后怎么用', value: summary.reuse || '后续相关任务组装上下文时会显示召回来源和命中理由。', tone: 'reuse' },
-    { label: '风险/质量', value: summary.risk || summary.quality || '未标记额外风险。', tone: 'risk' },
-  ]
-}
 
-function contextSectionRecallItems(section: ContextAssemblySection): string[] {
-  if (!Array.isArray(section.items) || section.items.length === 0) {
-    return []
-  }
-  return section.items
-    .slice(0, 5)
-    .map((item, index) => contextRecallItemLine(item, index))
-    .filter(Boolean)
-}
 
-function contextRecallItemLine(item: ContextAssemblySectionItem, index: number): string {
-  const name = stringifyValue(item.name || item.id || item.source || `item ${index + 1}`).trim()
-  const source = stringifyValue(item.source || '').trim()
-  const score = toTraceNumber(item.score)
-  const reasons = Array.isArray(item.reasons)
-    ? item.reasons.map((reason) => stringifyValue(reason).trim()).filter(Boolean)
-    : []
-  const matched = Array.isArray(item.matched)
-    ? item.matched.map((match) => stringifyValue(match).trim()).filter(Boolean)
-    : []
-  const reason = reasons.length > 0
-    ? reasons.slice(0, 3).join(', ')
-    : matched.length > 0
-      ? `matched ${matched.slice(0, 4).join(', ')}`
-      : stringifyValue(item.reason || '').trim()
-  const parts = [
-    name,
-    source && source !== name ? source : '',
-    score > 0 ? `score ${score.toFixed(2)}` : '',
-    reason,
-  ].filter(Boolean)
-  return parts.join(' - ')
-}
 
-function toTraceNumber(value: unknown): number {
-  const number = typeof value === 'number' ? value : Number(value)
-  return Number.isFinite(number) ? number : 0
-}
 
-function traceUsageTotal(usage: unknown): number {
-  if (!isRecord(usage)) {
-    return 0
-  }
-  const total = toTraceNumber(usage.total_tokens)
-  if (total > 0) {
-    return total
-  }
-  return toTraceNumber(usage.prompt_tokens) + toTraceNumber(usage.completion_tokens)
-}
 
-function traceUsageLine(usage: unknown): string {
-  if (!isRecord(usage)) {
-    return ''
-  }
-  const prompt = toTraceNumber(usage.prompt_tokens)
-  const completion = toTraceNumber(usage.completion_tokens)
-  const total = traceUsageTotal(usage)
-  const parts = [
-    prompt > 0 ? `${formatCompactCount(prompt)} in` : '',
-    completion > 0 ? `${formatCompactCount(completion)} out` : '',
-    total > 0 ? `${formatCompactCount(total)} total` : '',
-  ].filter(Boolean)
-  return parts.join(' / ')
-}
 
-function emptyCacheUsageSummary(): CacheUsageSummary {
-  return {
-    readTokens: 0,
-    writeTokens: 0,
-    promptTokens: 0,
-    inputTokens: 0,
-    totalTokens: 0,
-    calls: 0,
-    hitRate: 0,
-  }
-}
 
-function addCacheUsageSummary(left: CacheUsageSummary, right: CacheUsageSummary): CacheUsageSummary {
-  const readTokens = left.readTokens + right.readTokens
-  const writeTokens = left.writeTokens + right.writeTokens
-  const promptTokens = left.promptTokens + right.promptTokens
-  const inputTokens = left.inputTokens + right.inputTokens
-  const totalTokens = left.totalTokens + right.totalTokens
-  const calls = left.calls + right.calls
-  return {
-    readTokens,
-    writeTokens,
-    promptTokens,
-    inputTokens,
-    totalTokens,
-    calls,
-    hitRate: inputTokens > 0 ? Math.max(0, Math.min(1, readTokens / inputTokens)) : 0,
-  }
-}
 
-function traceNodeCacheUsage(node: TraceEventNode | null | undefined): CacheUsageSummary {
-  if (!node || !isRecord(node.usage)) {
-    return emptyCacheUsageSummary()
-  }
-  const usage = node.usage
-  const readTokens = toTraceNumber(usage.cache_read_tokens)
-  const writeTokens = toTraceNumber(usage.cache_creation_tokens)
-  const promptTokens = toTraceNumber(usage.prompt_tokens)
-  const completionTokens = toTraceNumber(usage.completion_tokens)
-  const totalTokens = traceUsageTotal(usage)
-  const providerText = [
-    node.protocol,
-    node.provider,
-    node.model,
-    node.model_id,
-  ].map((value) => stringifyValue(value).toLowerCase()).join(' ')
-  const cacheIsSeparateInput = providerText.includes('anthropic') || providerText.includes('claude')
-  const inputTokens = cacheIsSeparateInput
-    ? promptTokens + readTokens + writeTokens
-    : Math.max(promptTokens, readTokens + writeTokens, totalTokens - completionTokens)
-  return {
-    readTokens,
-    writeTokens,
-    promptTokens,
-    inputTokens,
-    totalTokens,
-    calls: 1,
-    hitRate: inputTokens > 0 ? Math.max(0, Math.min(1, readTokens / inputTokens)) : 0,
-  }
-}
 
-function cacheUsageHasData(summary: CacheUsageSummary | null | undefined): summary is CacheUsageSummary {
-  return Boolean(summary && (summary.readTokens > 0 || summary.writeTokens > 0 || summary.inputTokens > 0))
-}
 
-function formatCacheHitRate(summary: CacheUsageSummary | null | undefined): string {
-  if (!summary || summary.inputTokens <= 0) {
-    return '-'
-  }
-  return `${Math.round(Math.max(0, Math.min(1, summary.hitRate)) * 100)}%`
-}
 
-function traceCacheLine(summary: CacheUsageSummary | null | undefined): string {
-  if (!cacheUsageHasData(summary)) {
-    return ''
-  }
-  const parts = [
-    summary.readTokens > 0 ? `${formatCompactCount(summary.readTokens)} cache read` : '',
-    summary.writeTokens > 0 ? `${formatCompactCount(summary.writeTokens)} cache write` : '',
-    summary.inputTokens > 0 ? `${formatCacheHitRate(summary)} hit` : '',
-  ].filter(Boolean)
-  return parts.join(' / ')
-}
 
-function traceUsageAndCacheLine(node: TraceEventNode | null | undefined): string {
-  if (!node) {
-    return ''
-  }
-  return [
-    traceUsageLine(node.usage),
-    traceCacheLine(traceNodeCacheUsage(node)),
-  ].filter(Boolean).join(' / ')
-}
 
-function formatTurnCacheLabel(summary: CacheUsageSummary | null | undefined): string {
-  if (!cacheUsageHasData(summary)) {
-    return ''
-  }
-  return `缓存 ${formatCompactCount(summary.readTokens)} / ${formatCacheHitRate(summary)}`
-}
 
-function formatCacheTitle(summary: CacheUsageSummary | null | undefined): string {
-  if (!cacheUsageHasData(summary)) {
-    return ''
-  }
-  return [
-    `缓存命中率 ${formatCacheHitRate(summary)}`,
-    `缓存读取 ${formatCompactCount(summary.readTokens)}`,
-    summary.writeTokens > 0 ? `缓存写入 ${formatCompactCount(summary.writeTokens)}` : '',
-    summary.inputTokens > 0 ? `输入 ${formatCompactCount(summary.inputTokens)}` : '',
-    summary.calls > 0 ? `${formatCompactCount(summary.calls)} calls` : '',
-  ].filter(Boolean).join(' / ')
-}
 
-function summarizeCacheUsage(nodes: TraceEventNode[]): CacheUsageSummary {
-  const llmCompleteNodes = nodes.filter((node) => node.kind === 'llm_complete')
-  const usageNodes = llmCompleteNodes.length > 0 ? llmCompleteNodes : nodes.filter((node) => node.kind === 'task_completed')
-  return usageNodes.reduce((total, node) => addCacheUsageSummary(total, traceNodeCacheUsage(node)), emptyCacheUsageSummary())
-}
 
-function traceContextLine(context: TraceEventNode['context'] | null | undefined): string {
-  if (!context) {
-    return ''
-  }
-  const tokens = toTraceNumber(context.tokens_estimate)
-  const windowSize = toTraceNumber(context.context_window)
-  const ratio = toTraceNumber(context.ratio)
-  const parts = [
-    tokens > 0 ? `${formatCompactCount(tokens)}${windowSize > 0 ? `/${formatCompactCount(windowSize)}` : ''} tokens` : '',
-    ratio > 0 ? `${Math.round(Math.max(0, Math.min(1, ratio)) * 100)}%` : '',
-    toTraceNumber(context.messages) > 0 ? `${formatCompactCount(toTraceNumber(context.messages))} messages` : '',
-    toTraceNumber(context.tools) > 0 ? `${formatCompactCount(toTraceNumber(context.tools))} tools` : '',
-  ].filter(Boolean)
-  return parts.join(' · ')
-}
 
-function traceBlockLine(context: TraceEventNode['context'] | null | undefined): string {
-  if (!context?.blocks || !isRecord(context.blocks)) {
-    return ''
-  }
-  return Object.entries(context.blocks)
-    .filter(([, value]) => toTraceNumber(value) > 0)
-    .slice(0, 6)
-    .map(([key, value]) => `${key}:${formatCompactCount(toTraceNumber(value))}`)
-    .join(' · ')
-}
 
-function contextAssemblySections(assembly: ContextAssembly | null | undefined): ContextAssemblySection[] {
-  return Array.isArray(assembly?.sections) ? assembly.sections.filter((section) => isRecord(section)) : []
-}
 
-function contextAssemblyLine(assembly: ContextAssembly | null | undefined): string {
-  if (!assembly) {
-    return ''
-  }
-  const sections = contextAssemblySections(assembly)
-  const total = toTraceNumber(assembly.total_chars)
-  const used = toTraceNumber(assembly.used_chars)
-  const topSections = sections
-    .slice(0, 5)
-    .map((section) => section.label || section.name)
-    .filter(Boolean)
-    .join(', ')
-  const parts = [
-    used > 0 ? `${formatCompactCount(used)}${total > 0 ? `/${formatCompactCount(total)}` : ''} chars` : '',
-    sections.length > 0 ? `${formatCompactCount(sections.length)} sections` : '',
-    topSections ? `loaded ${topSections}` : '',
-  ].filter(Boolean)
-  return parts.join(' / ')
-}
 
-function contextSectionBudgetLine(section: ContextAssemblySection): string {
-  const used = toTraceNumber(section.used_chars)
-  const allocated = toTraceNumber(section.allocated_chars || section.budget_chars)
-  const requested = toTraceNumber(section.requested_chars)
-  const percent = allocated > 0 ? Math.round(Math.min(1, used / allocated) * 100) : 0
-  const parts = [
-    `${formatCompactCount(used)}${allocated > 0 ? `/${formatCompactCount(allocated)}` : ''} chars`,
-    allocated > 0 ? `${percent}%` : '',
-    requested > used ? `${formatCompactCount(requested)} requested` : '',
-    section.truncated ? 'truncated' : '',
-    section.stable ? 'stable' : 'runtime',
-  ].filter(Boolean)
-  return parts.join(' / ')
-}
 
-function contextSectionReason(section: ContextAssemblySection): string {
-  const itemHints = (section.items || [])
-    .slice(0, 3)
-    .map((item) => {
-      const name = stringifyValue(item.name || item.id || item.source || '').trim()
-      const score = toTraceNumber(item.score)
-      const reason = Array.isArray(item.reasons) && item.reasons.length > 0
-        ? item.reasons.slice(0, 2).join(', ')
-        : Array.isArray(item.matched) && item.matched.length > 0
-          ? `matched ${item.matched.slice(0, 3).join(', ')}`
-          : stringifyValue(item.reason || '').trim()
-      return [name, score > 0 ? `score ${score.toFixed(2)}` : '', reason].filter(Boolean).join(' - ')
-    })
-    .filter(Boolean)
-  return [section.reason, section.source, ...itemHints].filter(Boolean).join(' / ')
-}
 
-function contextAssemblyDetailText(assembly: ContextAssembly | null | undefined): string {
-  const sections = contextAssemblySections(assembly)
-  if (sections.length === 0) {
-    return ''
-  }
-  return sections
-    .map((section) => {
-      const title = section.label || section.name
-      const reason = contextSectionReason(section)
-      return `${title}: ${contextSectionBudgetLine(section)}${reason ? `; ${reason}` : ''}`
-    })
-    .join('\n')
-}
 
-function traceAssemblyLine(node: TraceEventNode | null): string {
-  if (!node || node.kind !== 'context_assembled') {
-    return ''
-  }
-  const included = Array.isArray(node.included)
-    ? node.included.map((item) => stringifyValue(item)).filter(Boolean).slice(0, 5).join(', ')
-    : isRecord(node.included)
-    ? Object.entries(node.included)
-        .filter(([, value]) => Boolean(value))
-        .map(([key]) => key)
-        .slice(0, 5)
-        .join(', ')
-    : ''
-  const assembly = isRecord(node.budget) ? node.budget as ContextAssembly : null
-  const parts = [
-    toTraceNumber(node.system_chars) > 0 ? `${formatCompactCount(toTraceNumber(node.system_chars))} system chars` : '',
-    contextAssemblyLine(assembly),
-    toTraceNumber(node.task_chars) > 0 ? `${formatCompactCount(toTraceNumber(node.task_chars))} task chars` : '',
-    toTraceNumber(node.session_context_chars) > 0 ? `${formatCompactCount(toTraceNumber(node.session_context_chars))} session chars` : '',
-    toTraceNumber(node.history_lines) > 0 ? `${formatCompactCount(toTraceNumber(node.history_lines))} history lines` : '',
-    included ? `included ${included}` : '',
-  ].filter(Boolean)
-  return parts.join(' · ')
-}
 
-function tracePlanLine(snapshot: WorkingSnapshot | null | undefined): string {
-  if (!snapshot) {
-    return ''
-  }
-  const plan = snapshot.plan
-  const goal = stringifyValue(plan?.goal || snapshot.plan_goal || '').trim()
-  const active = stringifyValue(plan?.active_step_title || snapshot.plan_active_step_title || '').trim()
-  const completed = toTraceNumber(plan?.completed_steps ?? snapshot.plan_completed_steps)
-  const total = toTraceNumber(plan?.total_steps ?? snapshot.plan_total_steps)
-  const pending = toTraceNumber(plan?.pending_steps ?? snapshot.plan_pending_steps)
-  const status = stringifyValue(plan?.status || snapshot.plan_status || '').trim()
-  const parts = [
-    status ? `status ${status}` : '',
-    total > 0 ? `${formatCompactCount(completed)}/${formatCompactCount(total)} steps` : '',
-    pending > 0 ? `${formatCompactCount(pending)} pending` : '',
-    active ? `active ${active}` : '',
-    goal ? compactText(goal, 90) : '',
-  ].filter(Boolean)
-  return parts.join(' · ')
-}
 
-function traceTodoLine(snapshot: WorkingSnapshot | null | undefined): string {
-  if (!snapshot) {
-    return ''
-  }
-  const todo = getTodoSnapshot(snapshot)
-  const total = toTraceNumber(todo.total_count)
-  const completed = toTraceNumber(todo.completed_count)
-  const pending = toTraceNumber(todo.pending_count)
-  const active = stringifyValue(todo.active_todo_title || '').trim()
-  const parts = [
-    total > 0 ? `${formatCompactCount(completed)}/${formatCompactCount(total)} done` : '',
-    pending > 0 ? `${formatCompactCount(pending)} open` : '',
-    active ? `active ${active}` : '',
-  ].filter(Boolean)
-  return parts.join(' · ')
-}
 
-function summarizeTrace(nodes: TraceEventNode[]): TraceSummary {
-  const llmCompleteNodes = nodes.filter((node) => node.kind === 'llm_complete')
-  const usageNodes = llmCompleteNodes.length > 0 ? llmCompleteNodes : nodes.filter((node) => node.kind === 'task_completed')
-  const taskCompleted = [...nodes].reverse().find((node) => node.kind === 'task_completed')
-  const modelStarts = nodes.filter((node) => node.kind === 'llm_start').length
-  const toolStarts = nodes.filter((node) => node.kind === 'tool_started').length
-  const permissionRequests = nodes.filter((node) => node.kind === 'permission_requested').length
-  return {
-    modelCalls: modelStarts || llmCompleteNodes.length,
-    tools: toolStarts || nodes.filter((node) => node.kind === 'tool_completed').length,
-    permissions: permissionRequests || nodes.filter((node) => node.kind.startsWith('permission_')).length,
-    tokens: usageNodes.reduce((total, node) => total + traceUsageTotal(node.usage), 0),
-    cost: usageNodes.reduce((total, node) => total + toTraceNumber(node.cost), 0),
-    elapsedMs: taskCompleted ? toTraceNumber(taskCompleted.elapsed_ms) : usageNodes.reduce((total, node) => total + toTraceNumber(node.elapsed_ms), 0),
-  }
-}
 
-function normalizeTraceNode(raw: unknown): TraceEventNode | null {
-  if (!isRecord(raw)) {
-    return null
-  }
-  const kind = stringifyValue(raw.kind || '').trim()
-  if (!kind) {
-    return null
-  }
-  const timestamp = stringifyValue(raw.timestamp || new Date().toISOString()).trim()
-  const id = stringifyValue(raw.id || '').trim() || createMessageId(`trace-${kind}`)
-  const node = {
-    ...raw,
-    id,
-    kind,
-    timestamp,
-  } as TraceEventNode
-  const sequence = Number(raw.sequence)
-  if (Number.isFinite(sequence)) {
-    node.sequence = sequence
-  }
-  const turn = Number(raw.turn)
-  if (Number.isFinite(turn) && turn > 0) {
-    node.turn = turn
-  }
-  return node
-}
 
-function compareTraceNodes(left: TraceEventNode, right: TraceEventNode): number {
-  const leftTime = Date.parse(left.timestamp || '')
-  const rightTime = Date.parse(right.timestamp || '')
-  if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) {
-    return leftTime - rightTime
-  }
-  const leftSequence = Number(left.sequence)
-  const rightSequence = Number(right.sequence)
-  if (Number.isFinite(leftSequence) && Number.isFinite(rightSequence) && leftSequence !== rightSequence) {
-    return leftSequence - rightSequence
-  }
-  return String(left.id || '').localeCompare(String(right.id || ''))
-}
 
-function traceNodeTaskId(node: TraceEventNode): string {
-  const explicit = stringifyValue(node.task_id || node.taskId || '').trim()
-  if (explicit) {
-    return explicit
-  }
-  const id = stringifyValue(node.id || '').trim()
-  const match = new RegExp(`^(.*)-\\d+-${node.kind}$`).exec(id)
-  return match?.[1] || ''
-}
 
-function traceShortTaskId(id: string): string {
-  const clean = id.trim()
-  return clean.length > 8 ? clean.slice(0, 8) : clean
-}
 
-function traceTaskStatus(nodes: TraceEventNode[]): TraceTaskGroup['status'] {
-  const terminal = [...nodes].reverse().find((node) => node.kind === 'task_completed')
-  if (terminal) {
-    if (terminal.need_user) {
-      return 'waiting'
-    }
-    if (terminal.ok === false || terminal.cancelled) {
-      return 'error'
-    }
-    return 'done'
-  }
-  if ([...nodes].reverse().some((node) => node.kind === 'permission_requested' || node.need_user)) {
-    return 'waiting'
-  }
-  return 'running'
-}
 
-function traceTaskLabel(nodes: TraceEventNode[], index: number, id: string): string {
-  const started = nodes.find((node) => node.kind === 'task_started')
-  const preview = compactText(started?.task_preview || started?.content_preview || '', 48)
-  if (preview) {
-    return preview
-  }
-  if (id === 'legacy') {
-    return 'Legacy trace'
-  }
-  return `Task ${index + 1} - ${traceShortTaskId(id)}`
-}
 
-function traceTaskSubtitle(nodes: TraceEventNode[], status: TraceTaskGroup['status']): string {
-  const first = nodes[0]
-  const parts = [
-    status,
-    `${formatCompactCount(nodes.length)} events`,
-    first?.timestamp ? formatTraceTime(first.timestamp) : '',
-  ].filter(Boolean)
-  return parts.join(' - ')
-}
 
-function groupTraceByTask(nodes: TraceEventNode[]): TraceTaskGroup[] {
-  const groups: TraceTaskGroup[] = []
-  const byId = new Map<string, TraceTaskGroup>()
-  let currentTaskId = ''
 
-  for (const node of [...nodes].sort(compareTraceNodes)) {
-    const explicitTaskId = traceNodeTaskId(node)
-    if (node.kind === 'task_started' && explicitTaskId) {
-      currentTaskId = explicitTaskId
-    }
-    const id = explicitTaskId || currentTaskId || 'legacy'
-    let group = byId.get(id)
-    if (!group) {
-      group = {
-        id,
-        label: '',
-        subtitle: '',
-        status: 'running',
-        nodes: [],
-      }
-      byId.set(id, group)
-      groups.push(group)
-    }
-    group.nodes.push(node)
-  }
 
-  return groups.map((group, index) => {
-    const status = traceTaskStatus(group.nodes)
-    return {
-      ...group,
-      status,
-      label: traceTaskLabel(group.nodes, index, group.id),
-      subtitle: traceTaskSubtitle(group.nodes, status),
-    }
-  })
-}
 
-function buildCacheUsageByTask(groups: TraceTaskGroup[]): CacheUsageByTask {
-  const byTask: CacheUsageByTask = new Map()
-  for (const group of groups) {
-    const byTurn: CacheUsageByTurn = new Map()
-    for (const node of group.nodes) {
-      if (node.kind !== 'llm_complete' || !node.turn) {
-        continue
-      }
-      const usage = traceNodeCacheUsage(node)
-      if (!cacheUsageHasData(usage)) {
-        continue
-      }
-      const current = byTurn.get(node.turn) || emptyCacheUsageSummary()
-      byTurn.set(node.turn, addCacheUsageSummary(current, usage))
-    }
-    if (byTurn.size > 0) {
-      byTask.set(group.id, byTurn)
-    }
-  }
-  return byTask
-}
 
-function cacheUsageForTurn(cacheByTask: CacheUsageByTask, taskId: string, turn?: number): CacheUsageSummary | null {
-  if (!taskId || !turn) {
-    return null
-  }
-  return cacheByTask.get(taskId)?.get(turn) || null
-}
 
-function attachCacheUsageToMessages(
-  messages: ViewMessage[],
-  cacheByTask: CacheUsageByTask,
-  defaultTaskId: string,
-): ViewMessage[] {
-  let changed = false
-  const next = messages.map((message) => {
-    if (message.kind !== 'tool') {
-      return message
-    }
-    const messageTaskId = normalizeLiveTaskId(message.taskId)
-    const taskId = messageTaskId === PENDING_TASK_ID ? defaultTaskId : messageTaskId || defaultTaskId
-    const cache = cacheUsageForTurn(cacheByTask, taskId, message.turn)
-    if (!cacheUsageHasData(cache)) {
-      return message
-    }
-    changed = true
-    return { ...message, cache }
-  })
-  return changed ? next : messages
-}
 
-function formatMs(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '0ms'
-  }
-  if (value < 1000) {
-    return `${Math.round(value)}ms`
-  }
-  if (value < 60_000) {
-    return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}s`
-  }
-  const minutes = Math.floor(value / 60_000)
-  const seconds = Math.round((value % 60_000) / 1000)
-  return `${minutes}m ${seconds}s`
-}
 
-function formatCost(value: number): string {
-  if (!Number.isFinite(value) || value <= 0) {
-    return '$0'
-  }
-  if (value < 0.01) {
-    return `$${value.toFixed(4)}`
-  }
-  return `$${value.toFixed(2)}`
-}
 
-function formatTraceTime(timestamp?: string): string {
-  if (!timestamp) {
-    return ''
-  }
-  const date = new Date(timestamp)
-  if (Number.isNaN(date.getTime())) {
-    return timestamp
-  }
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-}
 
-function traceKindClass(node: TraceEventNode): string {
-  if (node.kind.startsWith('llm_')) {
-    return 'model'
-  }
-  if (node.kind.startsWith('tool_')) {
-    return node.ok === false ? 'tool error' : 'tool'
-  }
-  if (node.kind.startsWith('permission_')) {
-    return node.kind === 'permission_denied' ? 'permission error' : 'permission'
-  }
-  if (node.kind === 'context_assembled') {
-    return 'context'
-  }
-  if (node.kind === 'working_updated') {
-    return 'working'
-  }
-  if (node.kind === 'task_completed' && (node.ok === false || node.need_user || node.cancelled)) {
-    return 'task warning'
-  }
-  if (node.kind.startsWith('task_')) {
-    return 'task'
-  }
-  return 'status'
-}
 
-function traceTitle(node: TraceEventNode | null): string {
-  if (!node) {
-    return '等待运行事件'
-  }
-  const model = stringifyValue(node.model || node.model_id || '').trim()
-  const tool = stringifyValue(node.tool || '').trim()
-  if (node.kind === 'task_started') {
-    return '任务开始'
-  }
-  if (node.kind === 'task_completed') {
-    if (node.cancelled) {
-      return '任务已取消'
-    }
-    if (node.need_user) {
-      return '等待用户处理'
-    }
-    return node.ok === false ? '任务异常结束' : '任务完成'
-  }
-  if (node.kind === 'status') {
-    return `状态 · ${stringifyValue(node.status || 'running')}`
-  }
-  if (node.kind === 'context_assembled') {
-    return '上下文已组装'
-  }
-  if (node.kind === 'llm_start') {
-    return `模型调用开始${model ? ` · ${model}` : ''}`
-  }
-  if (node.kind === 'llm_complete') {
-    if (node.cancelled) {
-      return '模型调用取消'
-    }
-    if (Boolean(node.is_error)) {
-      return '模型调用异常'
-    }
-    return `模型调用完成${model ? ` · ${model}` : ''}`
-  }
-  if (node.kind === 'tool_started') {
-    return `运行工具${tool ? ` · ${tool}` : ''}`
-  }
-  if (node.kind === 'tool_completed') {
-    return `${node.ok === false ? '工具失败' : '工具完成'}${tool ? ` · ${tool}` : ''}`
-  }
-  if (node.kind === 'permission_requested') {
-    return `权限请求${tool ? ` · ${tool}` : ''}`
-  }
-  if (node.kind === 'permission_resolved') {
-    return `权限处理 · ${stringifyValue(node.action || 'resolved')}`
-  }
-  if (node.kind === 'permission_denied') {
-    return '权限拒绝'
-  }
-  if (node.kind === 'working_updated') {
-    return tracePlanLine(node.snapshot) ? '计划进度更新' : '工作记忆更新'
-  }
-  return node.kind.replace(/_/g, ' ')
-}
 
-function traceSubtitle(node: TraceEventNode | null): string {
-  if (!node) {
-    return '下一次任务开始后会自动记录'
-  }
-  const parts = [
-    node.turn ? `Turn ${node.turn}` : '',
-    node.protocol ? String(node.protocol) : '',
-    node.call_id ? `call ${String(node.call_id).slice(0, 8)}` : '',
-    traceUsageAndCacheLine(node),
-    toTraceNumber(node.cost) > 0 ? formatCost(toTraceNumber(node.cost)) : '',
-    toTraceNumber(node.elapsed_ms) > 0 ? formatMs(toTraceNumber(node.elapsed_ms)) : '',
-    traceContextLine(node.context),
-    traceAssemblyLine(node),
-    tracePlanLine(node.snapshot) || traceTodoLine(node.snapshot),
-  ].filter(Boolean)
-  return parts.join(' · ') || node.kind
-}
 
-function traceDetails(node: TraceEventNode | null): TraceDetail[] {
-  if (!node) {
-    return []
-  }
-  const details: TraceDetail[] = []
-  const push = (label: string, value: unknown, limit = 220) => {
-    const text = typeof value === 'string' ? value : stringifyValue(value)
-    const preview = compactText(text, limit)
-    if (preview) {
-      details.push({ label, value: preview })
-    }
-  }
-  push('时间', node.timestamp ? formatTimestamp(node.timestamp) : '')
-  push('序号', node.sequence ?? '')
-  push('类型', node.kind)
-  push('模型', [node.model, node.model_id, node.protocol].filter(Boolean).join(' · '))
-  push('轮次', node.turn ? `Turn ${node.turn}` : '')
-  push('上下文', traceContextLine(node.context))
-  push('组装', traceAssemblyLine(node))
-  push('Context budget', contextAssemblyDetailText(isRecord(node.budget) ? node.budget as ContextAssembly : null), 900)
-  push('Blocks', traceBlockLine(node.context))
-  push('Token', traceUsageAndCacheLine(node))
-  push('成本', toTraceNumber(node.cost) > 0 ? formatCost(toTraceNumber(node.cost)) : '')
-  push('耗时', toTraceNumber(node.elapsed_ms) > 0 ? formatMs(toTraceNumber(node.elapsed_ms)) : '')
-  push('工具', node.tool || '')
-  push('Args', node.args, 360)
-  push('Observation', node.observation, 360)
-  push('权限', isRecord(node.request) ? permissionSummary(node.request) : node.reason || node.action || '')
-  push('Plan', tracePlanLine(node.snapshot))
-  push('TODO', traceTodoLine(node.snapshot))
-  push('预览', node.content_preview || node.final_preview || node.task_preview || '')
-  return details
-}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 function traceIcon(node: TraceEventNode | null): ReactNode {
   if (!node) {
@@ -2173,193 +524,21 @@ function traceIcon(node: TraceEventNode | null): ReactNode {
   return <Clock3 size={14} />
 }
 
-function createPendingRequest(sessionId: string, raw: unknown): PendingRequestState | null {
-  if (!sessionId || !isRecord(raw)) {
-    return null
-  }
-  const source = isRecord(raw.result) ? raw.result : raw
-  if (!source.need_user) {
-    return null
-  }
-  const permission = Boolean(source.permission_request)
-  const rawQuestion = stringifyValue(source.question || source.final || source.prompt || source.reason || source.message || '').trim()
-  const tool = stringifyValue(source.tool || '').trim()
-  const risk = stringifyValue(source.risk || '').trim()
-  const reason = stringifyValue(source.reason || '').trim()
-  const summary = permission ? permissionSummary(source) : stringifyValue(source.message || reason || '').trim()
-  const inlineChoices = permission ? { question: rawQuestion, choices: [] as PendingChoice[] } : extractInlinePendingChoices(rawQuestion)
-  const question = inlineChoices.question || rawQuestion
-  const choices = pendingChoices(source, inlineChoices.choices)
-  const id = [
-    sessionId,
-    permission ? 'permission' : 'ask_user',
-    tool,
-    risk,
-    question,
-    choices.map((choice) => choice.label).join('|'),
-  ].join('::')
-  return {
-    id,
-    sessionId,
-    kind: permission ? 'permission' : 'ask_user',
-    title: permission ? 'Approval required' : 'Waiting for input',
-    question,
-    summary,
-    tool,
-    risk,
-    reason,
-    choices,
-  }
-}
 
-function pendingChoices(source: Record<string, unknown>, fallbackChoices: PendingChoice[] = []): PendingChoice[] {
-  const fromOptions = Array.isArray(source.options)
-    ? source.options
-    : []
-  const fromCandidates = Array.isArray(source.candidates)
-    ? source.candidates
-    : []
-  const rawChoices = fromOptions.length > 0 ? fromOptions : fromCandidates
-  const structuredChoices = rawChoices
-    .map((choice) => {
-      if (isRecord(choice)) {
-        const label = stringifyValue(choice.label || choice.title || choice.name || choice.text || choice.value || choice.id || '').trim()
-        const value = stringifyValue(choice.value || choice.id || label).trim()
-        const description = stringifyValue(choice.description || '').trim()
-        return label ? { label, value, description } : null
-      }
-      const label = stringifyValue(choice).trim()
-      return label ? { label, value: label, description: '' } : null
-    })
-    .filter((choice): choice is PendingChoice => Boolean(choice))
-  return dedupePendingChoices(structuredChoices.length > 0 ? structuredChoices : fallbackChoices)
-}
 
-function extractInlinePendingChoices(text: string): { question: string; choices: PendingChoice[] } {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
-  const consumed = new Set<number>()
-  const choices: PendingChoice[] = []
-  let currentChoice: PendingChoice | null = null
-  const descriptionParts: string[][] = []
 
-  lines.forEach((line, index) => {
-    const match = line.match(/^\s*(?:[>*-]\s*)?(?:\(?([0-9]{1,2}|[A-Za-z])\)?[.)、:：])\s+(.+?)\s*$/)
-    if (match) {
-      const label = match[2].trim()
-      if (label) {
-        currentChoice = { label, value: label, description: '' }
-        choices.push(currentChoice)
-        descriptionParts.push([])
-        consumed.add(index)
-      }
-      return
-    }
 
-    if (currentChoice && line.trim() && /^\s{2,}\S/.test(line)) {
-      descriptionParts[descriptionParts.length - 1]?.push(line.trim())
-      consumed.add(index)
-      return
-    }
 
-    if (line.trim()) {
-      currentChoice = null
-    }
-  })
 
-  if (choices.length < 2) {
-    return { question: text, choices: [] }
-  }
 
-  const parsedChoices = choices.map((choice, index) => ({
-    ...choice,
-    description: descriptionParts[index]?.join('\n').trim() || choice.description,
-  }))
-  const question = lines.filter((_, index) => !consumed.has(index)).join('\n').trim()
-  return {
-    question,
-    choices: dedupePendingChoices(parsedChoices),
-  }
-}
 
-function dedupePendingChoices(choices: PendingChoice[]): PendingChoice[] {
-  const seen = new Set<string>()
-  const deduped: PendingChoice[] = []
-  choices.forEach((choice) => {
-    const label = choice.label.trim()
-    const value = (choice.value || label).trim()
-    if (!label) {
-      return
-    }
-    const key = `${label}\u0000${value}`.toLowerCase()
-    if (seen.has(key)) {
-      return
-    }
-    seen.add(key)
-    deduped.push({
-      label,
-      value,
-      description: choice.description.trim(),
-    })
-  })
-  return deduped
-}
 
-function permissionSummary(source: Record<string, unknown>): string {
-  const tool = stringifyValue(source.tool || 'command').trim() || 'command'
-  const details = isRecord(source.details) ? source.details : {}
-  if (tool === 'code_run') {
-    const codeType = stringifyValue(details.code_type || 'code').trim() || 'code'
-    const preview = stringifyValue(details.preview || '').trim()
-    const firstLine = preview.split('\n').find((line) => line.trim()) || ''
-    return `${codeType} command${firstLine ? `  ${compactText(firstLine, 120)}` : ''}`
-  }
-  if (tool === 'file_write' || tool === 'file_patch' || tool === 'file_read') {
-    return stringifyValue(details.path || source.question || tool).trim()
-  }
-  if (tool === 'web_scan') {
-    return stringifyValue(details.url || '(current tab)').trim()
-  }
-  return stringifyValue(source.question || tool).trim()
-}
 
-function createMessageId(prefix: string): string {
-  return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`
-}
 
-function roleLabel(role: string): string {
-  if (role === 'assistant') {
-    return 'Assistant'
-  }
-  if (role === 'user') {
-    return 'User'
-  }
-  if (role === 'system') {
-    return 'System'
-  }
-  return role || 'Message'
-}
 
-function statusLabel(status?: string): string {
-  if (!status) {
-    return ''
-  }
-  if (status === 'running') {
-    return 'running'
-  }
-  if (status === 'done') {
-    return 'done'
-  }
-  if (status === 'error') {
-    return '失败'
-  }
-  if (status === 'collapsed') {
-    return 'collapsed'
-  }
-  if (status === 'note') {
-    return '备注'
-  }
-  return status
-}
+
+
+
 
 function kindIcon(message: ViewMessage): ReactNode {
   if (message.kind === 'user') {
@@ -2417,6 +596,7 @@ export function App() {
   const [composerResetKey, setComposerResetKey] = useState(0)
   const [attachments, setAttachments] = useState<AttachmentSummary[]>([])
   const [pendingRequest, setPendingRequest] = useState<PendingRequestState | null>(null)
+  const [resumableSessionId, setResumableSessionId] = useState('')
   const [permissionMenuOpen, setPermissionMenuOpen] = useState(false)
   const [settingsForm, setSettingsForm] = useState<SettingsFormState>(() => createSettingsForm())
   const [settingsDirty, setSettingsDirty] = useState(false)
@@ -2443,6 +623,7 @@ export function App() {
   const [resizingEdge, setResizingEdge] = useState<ResizeEdge | null>(null)
   const liveSessionsRef = useRef<Record<string, LiveSessionState>>({})
   const traceBySessionRef = useRef<Record<string, TraceEventNode[]>>({})
+  const historyCacheRef = useRef<HistoryCacheState>({ sessionId: '', signature: '', messages: [] })
   const workspaceRef = useRef<HTMLDivElement | null>(null)
   const workspaceResizeRef = useRef<WorkspaceResizeDrag | null>(null)
   const messageScrollRef = useRef<HTMLDivElement | null>(null)
@@ -2525,8 +706,8 @@ export function App() {
   const todoState = useMemo(() => getTodoSnapshot(working), [working])
   const todoVisible = useMemo(() => hasTodoSnapshot(todoState), [todoState])
   const contextUsage = useMemo(
-    () => mergeLiveContextUsage(snapshot?.context || null, activeLiveMessages, visibleMessageCount),
-    [snapshot?.context, activeLiveMessages, visibleMessageCount],
+    () => mergeLiveContextUsage(snapshot?.context || null, visibleMessageCount),
+    [snapshot?.context, visibleMessageCount],
   )
   const contextPercent = Math.round(Math.max(0, Math.min(1, Number(contextUsage?.ratio || 0))) * 100)
   const contextTokens = Number(contextUsage?.tokens_estimate || 0)
@@ -2846,6 +1027,9 @@ export function App() {
       byId.set(node.id, node)
     }
     const nextSession = Array.from(byId.values()).sort(compareTraceNodes).slice(-600)
+    if (sameTraceNodes(previous, nextSession)) {
+      return
+    }
     const next = { ...current, [sessionId]: nextSession }
     traceBySessionRef.current = next
     setTraceBySession(next)
@@ -3297,6 +1481,41 @@ export function App() {
     })
   }
 
+  function appendLiveGuidance(sessionId: string, guidance: string, taskId = ''): void {
+    const text = guidance.trim()
+    if (!sessionId || !text) {
+      return
+    }
+    updateLiveSession(sessionId, (current) => {
+      const resolvedTaskId = liveTaskIdForEvent(current, taskId)
+      if (current.messages.some((message) => (
+        message.meta === 'guidance'
+        && message.body.trim() === text
+        && liveMessageBelongsToTask(message, resolvedTaskId)
+      ))) {
+        return current
+      }
+      return {
+        ...current,
+        taskId: resolvedTaskId || current.taskId,
+        started: true,
+        messages: [
+          ...current.messages,
+          {
+            id: createMessageId('guidance'),
+            kind: 'user',
+            role: 'user',
+            title: 'Guidance',
+            body: text,
+            turn: getConversationTurn(sessionId),
+            taskId: resolvedTaskId || undefined,
+            meta: 'guidance',
+          },
+        ],
+      }
+    })
+  }
+
   function beginLiveTool(sessionId: string, tool: string, argsText: string, explicitTurn?: number, taskId = ''): void {
     if (!sessionId) {
       return
@@ -3332,6 +1551,37 @@ export function App() {
         streamBuffer: '',
         turn: Math.max(current.turn ?? 0, turn),
       }
+    })
+  }
+
+  function appendLiveToolStream(sessionId: string, tool: string, chunk: string, taskId = ''): void {
+    if (!sessionId || !chunk) {
+      return
+    }
+    updateLiveSession(sessionId, (current) => {
+      if (!liveTaskEventApplies(current, taskId)) {
+        return current
+      }
+      const resolvedTaskId = liveTaskIdForEvent(current, taskId)
+      const messages = [...current.messages]
+      for (let index = messages.length - 1; index >= 0; index -= 1) {
+        const item = messages[index]
+        if (item.kind === 'tool' && item.status === 'running' && liveMessageBelongsToTask(item, resolvedTaskId)) {
+          const streamed = `${item.summary || ''}${chunk}`
+          messages[index] = {
+            ...item,
+            summary: streamed,
+            body: compactText(streamed, 180) || item.body,
+            taskId: resolvedTaskId || item.taskId,
+          }
+          return {
+            ...current,
+            taskId: resolvedTaskId || current.taskId,
+            messages,
+          }
+        }
+      }
+      return current
     })
   }
 
@@ -3389,6 +1639,93 @@ export function App() {
         messages,
         turn: completedTurn ? Math.max(current.turn ?? 0, completedTurn) : current.turn,
       }
+    })
+  }
+
+  function applyLiveSubagentEvent(
+    sessionId: string,
+    subIndex: number,
+    subTask: string,
+    kind: string,
+    payload: { tool?: string; message?: string; ok?: boolean; error?: string; observation?: string },
+    taskId = '',
+  ): void {
+    if (!sessionId) {
+      return
+    }
+    updateLiveSession(sessionId, (current) => {
+      if (!liveTaskEventApplies(current, taskId)) {
+        return current
+      }
+      const resolvedTaskId = liveTaskIdForEvent(current, taskId)
+      const messageId = `subagent-${sessionId}-${resolvedTaskId || 'live'}-${subIndex}`
+      const label = `子任务 ${subIndex + 1}`
+      const taskPreview = compactText(subTask, 80)
+
+      let title = `${label} - 运行中`
+      let status = 'running'
+      let meta = 'running'
+      let bodyLine = ''
+      if (kind === 'started') {
+        bodyLine = taskPreview
+      } else if (kind === 'progress') {
+        bodyLine = compactText(payload.message || '', 160)
+      } else if (kind === 'tool_started') {
+        bodyLine = `调用 ${payload.tool || 'tool'} ...`
+      } else if (kind === 'tool_completed') {
+        bodyLine = `${payload.tool || 'tool'} 完成`
+      } else if (kind === 'done') {
+        status = payload.ok ? 'done' : 'error'
+        meta = payload.ok ? 'done' : 'error'
+        title = payload.ok ? `${label} - 完成` : `${label} - 失败`
+        bodyLine = payload.ok ? '已完成' : compactText(payload.error || '失败', 160)
+      }
+
+      const detailLine = (() => {
+        if (kind === 'progress' && payload.message) return compactText(payload.message, 200)
+        if (kind === 'tool_started' && payload.tool) return `运行 ${payload.tool}`
+        if (kind === 'tool_completed' && payload.tool) return `完成 ${payload.tool}`
+        if (kind === 'done' && !payload.ok && payload.error) return `Error:\n${payload.error}`
+        return ''
+      })()
+
+      const messages = [...current.messages]
+      const existingIndex = messages.findIndex((item) => item.id === messageId)
+      if (existingIndex >= 0) {
+        const prev = messages[existingIndex]
+        // done 是终态，不被后续滞后事件覆盖
+        if ((prev.status === 'done' || prev.status === 'error') && kind !== 'done') {
+          return current
+        }
+        const details = Array.isArray(prev.details) ? [...prev.details] : []
+        if (detailLine) {
+          details.push(detailLine)
+        }
+        messages[existingIndex] = {
+          ...prev,
+          title: status === 'running' ? `${label} - ${taskPreview}` : title,
+          body: bodyLine || prev.body,
+          details,
+          status,
+          meta,
+          taskId: resolvedTaskId || prev.taskId,
+        }
+        return { ...current, messages, taskId: resolvedTaskId || current.taskId }
+      }
+
+      const subMessage: ViewMessage = {
+        id: messageId,
+        kind: 'tool',
+        role: 'assistant',
+        title: status === 'running' ? `${label} - ${taskPreview}` : title,
+        body: bodyLine || taskPreview,
+        details: detailLine ? [detailLine] : [],
+        meta,
+        status,
+        taskId: resolvedTaskId || undefined,
+      }
+      messages.push(subMessage)
+      return { ...current, messages, taskId: resolvedTaskId || current.taskId }
     })
   }
 
@@ -3568,7 +1905,10 @@ export function App() {
     const task = text.trim()
     const sessionId = activeSessionId
     if (busy) {
-      setErrorText('A task is already running')
+      // 任务运行中：有输入即作为引导发送（兼容旧的 /btw 前缀，可省略）。
+      const stripped = parseBtwCommand(task)
+      const guidance = stripped === null ? task : stripped
+      await handleGuideTask(guidance)
       return
     }
     if (!sessionId) {
@@ -3590,7 +1930,7 @@ export function App() {
     const nextTurn = getConversationTurn(sessionId)
     updateLiveSession(sessionId, () => ({
       messages: [
-        ...(liveSessionsRef.current[sessionId]?.messages || []).filter((message) => message.kind === 'diff'),
+        ...liveFileChangeAnchorMessages(liveSessionsRef.current[sessionId]?.messages || []),
         {
           id: createMessageId('user'),
           kind: 'user',
@@ -3624,16 +1964,57 @@ export function App() {
       ...current,
       taskId: response.data?.task_id || current.taskId,
       messages: response.data?.task_id
-        ? current.messages.map((message) => (
-          liveMessageBelongsToTask(message, PENDING_TASK_ID)
-            ? tagLiveMessageTask(message, response.data?.task_id || '')
-            : message
-        ))
+        ? tagPendingLiveMessages(current.messages, response.data.task_id)
         : current.messages,
     }))
     setDraftText('')
     setAttachments([])
     setComposerResetKey((value) => value + 1)
+    setStatusText('running')
+  }
+
+  async function handleGuideTask(guidance: string): Promise<void> {
+    const sessionId = activeSessionId
+    if (!sessionId) {
+      setErrorText('No active session')
+      return
+    }
+    if (!guidance) {
+      setErrorText('Enter guidance for the running task')
+      return
+    }
+    setErrorText('')
+    setNoticeText('')
+    setStatusText('guiding')
+    const currentTaskId = activeLiveSession.taskId || activeSession?.task_id || ''
+    updateLiveSession(sessionId, (current) => ({
+      ...current,
+      messages: [
+        ...current.messages,
+        {
+          id: createMessageId('guidance'),
+          kind: 'user',
+          role: 'user',
+          title: 'Guidance',
+          body: guidance,
+          turn: getConversationTurn(sessionId),
+          taskId: currentTaskId || current.taskId,
+          meta: 'guidance',
+        },
+      ],
+      started: true,
+    }))
+
+    const response = await window.chrysalis.guideTask(sessionId, guidance)
+    if (!response.ok) {
+      const error = response.error || 'Failed to guide task'
+      setErrorText(error)
+      setStatusText('error')
+      return
+    }
+    setDraftText('')
+    setComposerResetKey((value) => value + 1)
+    setNoticeText('Guidance added to the running task')
     setStatusText('running')
   }
 
@@ -3672,7 +2053,11 @@ export function App() {
       messages: response.data?.task_id
         ? current.messages
           .filter((message) => message.meta !== 'pending_user')
-          .map((message) => tagLiveMessageTask(message, response.data?.task_id || ''))
+          .map((message) => (
+            isLiveFileChangeAnchorMessage(message, liveDiffTaskIds(current.messages))
+              ? message
+              : tagLiveMessageTask(message, response.data?.task_id || '')
+          ))
         : current.messages.filter((message) => message.meta !== 'pending_user'),
     }))
     setStatusText('running')
@@ -3723,6 +2108,21 @@ export function App() {
       return
     }
     setNoticeText('Cancelling current task')
+  }
+
+  async function handleResume(): Promise<void> {
+    const sessionId = activeSessionId
+    if (!sessionId) {
+      return
+    }
+    const response = await window.chrysalis.resumeTask(sessionId)
+    if (!response.ok) {
+      setErrorText(response.error || 'Failed to resume task')
+      return
+    }
+    setResumableSessionId((current) => (current === sessionId ? '' : current))
+    setErrorText('')
+    setNoticeText('Resuming from checkpoint')
   }
 
   async function openSettingsPage(): Promise<void> {
@@ -3921,10 +2321,11 @@ export function App() {
   }
 
   async function handleGatewayStart(platformId: string): Promise<void> {
-    const response = await window.chrysalis.gatewayStart(platformId)
+    const sharedGroups = platformId === 'qq_personal'
+    const response = await window.chrysalis.gatewayStart(platformId, sharedGroups)
     const ok = applyGatewayResponse(response, '启动网关失败')
     if (ok) {
-      setNoticeText(`${gatewayPlatformLabel(platformId)} 网关已启动`)
+      setNoticeText(`${gatewayPlatformLabel(platformId)} 网关已启动${sharedGroups ? '（群共享会话）' : ''}`)
       void handleGatewayLogs(platformId)
     }
   }
@@ -4104,6 +2505,14 @@ export function App() {
       return
     }
 
+    if (event.event === 'guidance') {
+      const content = String(event.content || '')
+      if (content && eventSessionId) {
+        appendLiveGuidance(eventSessionId, content, eventTaskId)
+      }
+      return
+    }
+
     if (event.event === 'tool_started') {
       if (event.snapshot) {
         applySnapshot(event.snapshot as RuntimeSnapshot, {
@@ -4117,9 +2526,36 @@ export function App() {
       return
     }
 
+    if (event.event === 'tool_stream') {
+      if (eventSessionId) {
+        appendLiveToolStream(eventSessionId, String(event.tool || 'tool'), String(event.content || ''), eventTaskId)
+      }
+      return
+    }
+
     if (event.event === 'tool_completed') {
       if (eventSessionId) {
         completeLiveTool(eventSessionId, String(event.tool || 'tool'), stringifyValue(event.observation), Number(event.turn || 0), eventTaskId)
+      }
+      return
+    }
+
+    if (event.event === 'subagent') {
+      if (eventSessionId) {
+        applyLiveSubagentEvent(
+          eventSessionId,
+          Number(event.sub_index || 0),
+          String(event.task || ''),
+          String(event.kind || ''),
+          {
+            tool: event.tool ? String(event.tool) : undefined,
+            message: event.message ? String(event.message) : undefined,
+            ok: typeof event.ok === 'boolean' ? event.ok : undefined,
+            error: event.error ? String(event.error) : undefined,
+            observation: event.observation ? stringifyValue(event.observation) : undefined,
+          },
+          eventTaskId,
+        )
       }
       return
     }
@@ -4155,6 +2591,15 @@ export function App() {
         if (sessionId === currentActiveSessionId) {
           setStatusText(String(event.status || 'running'))
         }
+        setResumableSessionId((current) => (current === sessionId ? '' : current))
+      }
+      return
+    }
+
+    if (event.event === 'task_resumable') {
+      const sessionId = String(event.session_id || '')
+      if (sessionId) {
+        setResumableSessionId(sessionId)
       }
       return
     }
@@ -4265,11 +2710,23 @@ export function App() {
     const preservePendingSession = Boolean(nextPending && nextPending.sessionId === data.active_session_id)
     snapshotRef.current = data
     setSnapshot(data)
-    setHistoryMessages(normalizeHistory(data.history || []))
+    const historySignature = runtimeHistorySignature(data.active_session_id || '', data.history || [])
+    if (
+      historyCacheRef.current.sessionId !== data.active_session_id ||
+      historyCacheRef.current.signature !== historySignature
+    ) {
+      historyCacheRef.current = {
+        sessionId: data.active_session_id || '',
+        signature: historySignature,
+        messages: normalizeHistory(data.history || []),
+      }
+    }
+    setHistoryMessages(historyCacheRef.current.messages)
     applyTraceSnapshot(data.active_session_id || '', data.trace || [])
     setWorking(data.working || emptyWorking)
     setAttachments(data.attachments || [])
     setPendingRequest(nextPending)
+    setResumableSessionId(data.resumable_session ? (data.active_session_id || '') : '')
     setStatusText(data.busy ? 'running' : 'ready')
     if (!options.keepError) {
       setErrorText('')
@@ -5159,6 +3616,7 @@ export function App() {
                   busy={busy}
                   clearSignal={composerResetKey}
                   value={draftText}
+                  placeholder={busy ? '输入引导内容，留空点击按钮可终止任务...' : 'Ask Chrysalis to do something...'}
                   onChange={(text) => {
                     setDraftText(text)
                   }}
@@ -5218,15 +3676,33 @@ export function App() {
                   <div className="footer-actions">
                     <span className="composer-model-chip">{snapshot?.model || 'my codex'}</span>
                     <ContextRing context={contextUsage} />
+                    {!busy && resumableSessionId && resumableSessionId === activeSessionId ? (
+                      <button
+                        className="composer-resume-button"
+                        type="button"
+                        onClick={() => void handleResume()}
+                        title="从断点继续上次被中断的任务"
+                        aria-label="Resume task from checkpoint"
+                      >
+                        <RefreshCw size={14} />
+                        <span>继续</span>
+                      </button>
+                    ) : null}
                     <button
-                      className={`composer-run-button ${busy ? 'busy' : ''}`}
+                      className={`composer-run-button ${busy ? 'busy' : ''} ${busy && !draftText.trim() ? 'danger' : ''}`}
                       type="button"
-                      onClick={() => busy ? void handleCancel() : void handleComposerSubmit(draftText)}
-                      disabled={!busy && (activePendingRequest ? !draftText.trim() : !draftText.trim() && attachments.length === 0)}
-                      title={busy ? 'Stop task' : 'Send'}
-                      aria-label={busy ? 'Stop task' : 'Send'}
+                      onClick={() => {
+                        if (busy && !draftText.trim()) {
+                          void handleCancel()
+                        } else {
+                          void handleComposerSubmit(draftText)
+                        }
+                      }}
+                      disabled={busy ? false : (activePendingRequest ? !draftText.trim() : !draftText.trim() && attachments.length === 0)}
+                      title={busy ? (draftText.trim() ? 'Guide task' : 'Stop task') : 'Send'}
+                      aria-label={busy ? (draftText.trim() ? 'Guide task' : 'Stop task') : 'Send'}
                     >
-                      {busy ? <Square size={13} /> : <Send size={15} />}
+                      {busy && !draftText.trim() ? <Square size={15} /> : <Send size={15} />}
                     </button>
                     <button
                       className="icon-button"
@@ -5247,16 +3723,6 @@ export function App() {
                       aria-label="清空附件"
                     >
                       <RotateCcw size={15} />
-                    </button>
-                    <button
-                      className="icon-button danger"
-                      type="button"
-                      onClick={() => void handleCancel()}
-                      disabled={!busy}
-                      title="Cancel task"
-                      aria-label="Cancel task"
-                    >
-                      <Square size={15} />
                     </button>
                   </div>
                 </div>
@@ -6364,42 +4830,15 @@ function ReviewMetaRows({ item }: { item: ReviewItem }) {
   )
 }
 
-function reviewItemTitle(item: ReviewItem): string {
-  return item.title || item.raw_id || item.id
-}
 
-function reviewItemSummary(item: ReviewItem): string {
-  return compactText(item.description || item.reason || item.content || item.body || '', 140)
-}
 
-function reviewTargetLabel(item: ReviewItem): string {
-  const target = item.target || item.category || ''
-  if (item.kind === 'memory') {
-    return MEMORY_TARGET_OPTIONS.find((option) => option.value === target)?.label || target || '记忆'
-  }
-  return target ? `技能笔记 · ${target}` : '技能笔记'
-}
 
-function reviewStatusLabel(status: ReviewStatus | string): string {
-  if (status === 'approved') {
-    return '已批准'
-  }
-  if (status === 'discarded') {
-    return '已丢弃'
-  }
-  return '待审核'
-}
 
-function formatReviewTime(value?: string | null): string {
-  if (!value) {
-    return '-'
-  }
-  const date = new Date(value)
-  if (Number.isNaN(date.getTime())) {
-    return value
-  }
-  return date.toLocaleString()
-}
+
+
+
+
+
 
 function SessionRow({
   session,
@@ -6871,18 +5310,9 @@ function LogRow({
   )
 }
 
-function stripAnsi(value: string): string {
-  return String(value || '').replace(/\u001b\[[0-9;]*m/g, '').replace(/\u001b\][^\u0007]*\u0007/g, '')
-}
 
-function stripSummaryMarkup(value: string): string {
-  const normalized = String(value || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n')
-  return normalized
-    .replace(/<summary>[\s\S]*?(<\/summary>|$)/gi, '')
-    .replace(/<\/?summary>/gi, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-}
+
+
 
 function renderMarkdown(value: string): ReactNode[] {
   const lines = stripSummaryMarkup(value).split('\n')
@@ -7180,87 +5610,31 @@ function SettingsField({
   )
 }
 
-function parseIntOrFallback(value: string, fallback: number): number {
-  const parsed = Number.parseInt(String(value).trim(), 10)
-  return Number.isNaN(parsed) ? fallback : parsed
-}
 
-function parseFloatOrFallback(value: string, fallback: number): number {
-  const parsed = Number.parseFloat(String(value).trim())
-  return Number.isNaN(parsed) ? fallback : parsed
-}
 
-function countConversationTurns(history: RuntimeSnapshot['history']): number {
-  return (history || []).filter((message) => {
-    if (String(message.role || '').toLowerCase() !== 'user') {
-      return false
-    }
-    const blocks = Array.isArray(message.blocks) ? message.blocks : []
-    if (blocks.some((block) => String(block.type || '').toLowerCase() === 'tool_result')) {
-      return false
-    }
-    return Boolean(readCanonicalText(message).trim())
-  }).length
-}
 
-function countViewChatMessages(messages: ViewMessage[]): number {
-  return (messages || []).filter((message) => {
-    if (!message.body.trim()) {
-      return false
-    }
-    if (message.kind === 'user') {
-      return true
-    }
-    return message.kind === 'assistant' && message.meta !== 'pending_user'
-  }).length
-}
 
-function mergeLiveContextUsage(
-  context: RuntimeSnapshot['context'] | null | undefined,
-  liveMessages: ViewMessage[],
-  visibleMessageCount: number,
-): RuntimeSnapshot['context'] | null {
-  if (!context && liveMessages.length === 0) {
-    return null
+
+
+
+
+
+
+
+
+function runtimeHistorySignature(sessionId: string, history: RuntimeSnapshot['history']): string {
+  const last = history.length > 0 ? history[history.length - 1] : null
+  if (!last) {
+    return `${sessionId}:0`
   }
-  const base = context || {}
-  const liveChars = estimateViewMessageChars(liveMessages)
-  const baseChars = Number(base.chars || 0)
-  const chars = Math.max(baseChars, baseChars + liveChars)
-  const tokensEstimate = Math.max(Number(base.tokens_estimate || 0), Math.ceil(chars / 3))
-  const budgetChars = Number(base.budget_chars || Number(base.context_window || 0) * 3 || 0)
-  const ratio = budgetChars > 0 ? Math.max(Number(base.ratio || 0), Math.min(1, chars / budgetChars)) : Number(base.ratio || 0)
-  return {
-    ...base,
-    chars,
-    tokens_estimate: tokensEstimate,
-    ratio,
-    messages: visibleMessageCount,
-  }
-}
-
-function estimateViewMessageChars(messages: ViewMessage[]): number {
-  return (messages || []).reduce((total, message) => {
-    const details = Array.isArray(message.details) ? message.details.join('\n') : ''
-    return total + message.body.length + details.length + message.title.length + 64
-  }, 0)
-}
-
-function readCanonicalText(message: RuntimeSnapshot['history'][number]): string {
-  if (typeof message.content === 'string') {
-    return message.content
-  }
-  const blocks = Array.isArray(message.blocks) ? message.blocks : []
-  return blocks
-    .map((block) => {
-      if (typeof block.text === 'string') {
-        return block.text
-      }
-      if (typeof block.content === 'string') {
-        return block.content
-      }
-      return ''
-    })
-    .filter(Boolean)
-    .join('\n')
+  const blocks = Array.isArray(last.blocks) ? last.blocks : []
+  const lastText = readCanonicalText(last)
+  const lastMarker = [
+    last.role || '',
+    blocks.length,
+    lastText.length,
+    lastText.slice(0, 48),
+    lastText.slice(-48),
+  ].join('|')
+  return `${sessionId}:${history.length}:${lastMarker}`
 }

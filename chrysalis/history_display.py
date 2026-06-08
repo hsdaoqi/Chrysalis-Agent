@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+ORPHANED_TOOL_RESULT_PREFIX = "[orphaned tool result converted to text]"
+
 _INTERNAL_PROMPT_KINDS = {
     "internal",
     "internal_prompt",
@@ -65,7 +67,8 @@ def message_display_text(message: dict[str, Any]) -> str:
 
 def visible_user_text(message: dict[str, Any]) -> str:
     text = message_display_text(message) or extract_text(message_blocks(message))
-    return strip_runtime_context(text)
+    text = strip_runtime_context(text)
+    return "" if is_orphaned_tool_result_text(text) else text
 
 
 def strip_runtime_context(text: str) -> str:
@@ -164,6 +167,10 @@ def is_internal_prompt_message(message: dict[str, Any]) -> bool:
 
 def is_tool_result_message(message: dict[str, Any]) -> bool:
     return str(message.get("role", "")) == "user" and has_tool_result(message_blocks(message))
+
+
+def is_orphaned_tool_result_text(text: str) -> bool:
+    return str(text or "").strip().startswith(ORPHANED_TOOL_RESULT_PREFIX)
 
 
 def is_internal_assistant_candidate(history: list[dict[str, Any]], index: int) -> bool:

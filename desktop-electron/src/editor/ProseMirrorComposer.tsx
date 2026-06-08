@@ -24,9 +24,6 @@ export function ProseMirrorComposer({
   }, [clearSignal])
 
   function submit(): void {
-    if (busy) {
-      return
-    }
     const currentValue = textareaRef.current?.value ?? value
     onChange(currentValue)
     onSubmit(currentValue)
@@ -39,7 +36,6 @@ export function ProseMirrorComposer({
         className="task-input"
         value={value}
         placeholder={placeholder}
-        disabled={busy}
         spellCheck={false}
         onChange={(event) => onChange(event.currentTarget.value)}
         onKeyDown={(event) => {

@@ -1,6 +1,7 @@
 """工具注册表：@tool 装饰器 + 统一分发 + TOOL_PROMPT 自动生成。"""
 
 from dataclasses import dataclass, field
+import inspect
 from pathlib import Path
 
 from configs.config import PROJECT_ROOT
@@ -26,16 +27,33 @@ def tool(name: str, description: str, params: dict[str, str] | None = None):
     return decorator
 
 
-def run_tool(name: str, args: dict, workspace: Path | None = None) -> dict:
-    """统一分发入口。"""
+def run_tool(name: str, args: dict, workspace: Path | None = None, on_stream=None) -> dict:
+    """统一分发入口。
+
+    若工具函数签名声明了 on_stream 参数且调用方传入了 on_stream 回调，则透传，
+    以便工具在执行期间边跑边回传输出（流式）。否则保持旧行为，向后兼容。
+    """
     name, args = _normalize_alias_call(name, args)
     tool_def = _REGISTRY.get(name)
     if not tool_def:
         return {"ok": False, "error": f"未知工具: {name}"}
     try:
+        if on_stream is not None and _tool_accepts_on_stream(tool_def.fn):
+            return tool_def.fn(args=args, workspace=workspace, on_stream=on_stream)
         return tool_def.fn(args=args, workspace=workspace)
     except Exception as exc:
         return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+
+
+def _tool_accepts_on_stream(fn) -> bool:
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+    return "on_stream" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    )
 
 
 def _normalize_alias_call(name: str, args: dict) -> tuple[str, dict]:

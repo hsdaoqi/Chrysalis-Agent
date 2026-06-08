@@ -36,7 +36,15 @@ python -m PyInstaller `
     --hidden-import chrysalis.tools.code_tools `
     --hidden-import chrysalis.tools.agent_tools `
     --hidden-import chrysalis.tools.vision_tools `
-    chrysalis\electron_runtime.py
+    --hidden-import chrysalis.electron_runtime `
+    --hidden-import chrysalis.electron_runtime.tasks `
+    --hidden-import chrysalis.electron_runtime.settings `
+    --hidden-import chrysalis.electron_runtime.sessions `
+    --hidden-import chrysalis.electron_runtime.workspace `
+    --hidden-import chrysalis.electron_runtime.gateway `
+    --hidden-import chrysalis.electron_runtime.cron `
+    --hidden-import chrysalis.electron_runtime.review `
+    chrysalis\electron_runtime_main.py
 
 Write-Host ""
 Write-Host "Built runtime: $(Join-Path $OutDir 'chrysalis-runtime.exe')"

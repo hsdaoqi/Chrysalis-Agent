@@ -47,7 +47,22 @@ logs/
 # 可变文件
 memory/global_mem.txt
 memory/global_mem_insight.txt
+skills/
 
 # VitePress / Node.js
 node_modules/
 .npm-cache/
+
+# Local test/runtime caches
+.pytest_cache_local/
+.tmp/
+
+# VitePress cache
+.vitepress/cache/
+docs/.vitepress/cache/
+
+# Windows reserved-name artifact
+nul
+
+# Local settings
+.claude/settings.local.json

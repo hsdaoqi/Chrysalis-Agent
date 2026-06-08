@@ -148,31 +148,19 @@ class QQAdapter(TextPlatformAdapter):
             return SendResult(False, error="empty media path")
 
         if _is_url(path):
-            result = await self._send_remote_media(source, path, file_type=file_type)
-            if result.success:
-                return result
-            fallback_tag = _fallback_tag(file_type)
-            return await self.send_text(source, f"[{fallback_tag}:{path}]")
+            return await self._send_remote_media(source, path, file_type=file_type)
 
         result = await self._send_local_media(source, path, file_type=file_type)
         if result.success:
             return result
-        fallback_tag = _fallback_tag(file_type)
-        fallback = f"[{fallback_tag}:{path}]"
-        try:
-            fallback_result = await self.send_text(source, fallback)
-            if fallback_result.success:
-                return fallback_result
-            return SendResult(False, error=fallback_result.error or result.error)
-        except Exception as exc:
-            return SendResult(False, error=str(exc))
+        return result
 
     async def _send_remote_media(self, source: SessionSource, url: str, *, file_type: int) -> SendResult:
         try:
             is_group = source.chat_type == "group"
             api = self.client.api.post_group_file if is_group else self.client.api.post_c2c_file
             key = "group_openid" if is_group else "openid"
-            resp = await api(
+            response = await api(
                 **{
                     key: source.chat_id,
                     "file_type": file_type,
@@ -180,7 +168,7 @@ class QQAdapter(TextPlatformAdapter):
                     "srv_send_msg": True,
                 }
             )
-            return SendResult(True, raw_response=resp)
+            return SendResult(True, raw_response=response)
         except Exception as exc:
             print(f"[QQ] remote media send error: {exc}", flush=True)
             return SendResult(False, error=str(exc))
@@ -205,8 +193,8 @@ class QQAdapter(TextPlatformAdapter):
                 file_type=file_type,
                 file_name=path.name,
             )
-            file_info = self._extract_file_info(upload)
-            if not file_info:
+            media = self._extract_media(upload)
+            if not media:
                 return SendResult(False, error=f"Upload returned no file_info: {upload}")
 
             is_group = source.chat_type == "group"
@@ -216,7 +204,7 @@ class QQAdapter(TextPlatformAdapter):
                 **{
                     key: source.chat_id,
                     "msg_type": 7,
-                    "media": {"file_info": file_info},
+                    "media": media,
                     "msg_id": source.message_id,
                     "msg_seq": self._next_msg_seq(),
                 }
@@ -262,15 +250,28 @@ class QQAdapter(TextPlatformAdapter):
 
     @staticmethod
     def _extract_file_info(upload: dict[str, Any]) -> str:
+        media = QQAdapter._extract_media(upload)
+        return str(media.get("file_info", "") or "").strip() if media else ""
+
+    @staticmethod
+    def _extract_media(upload: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(upload, dict):
-            return ""
-        file_info = str(upload.get("file_info", "") or "").strip()
-        if file_info:
-            return file_info
+            return {}
+        src = upload.get("data") if isinstance(upload.get("data"), dict) else upload
+        media: dict[str, Any] = {}
+        for key in ("file_uuid", "file_info", "ttl"):
+            value = src.get(key)
+            if value not in (None, ""):
+                media[key] = value
+        if media.get("file_info"):
+            return media
         data = upload.get("data")
-        if isinstance(data, dict):
-            return str(data.get("file_info", "") or "").strip()
-        return ""
+        if isinstance(data, dict) and isinstance(data.get("media"), dict):
+            nested = data["media"]
+            file_info = str(nested.get("file_info", "") or "").strip()
+            if file_info:
+                return {key: value for key, value in nested.items() if value not in (None, "")}
+        return {}
 
     def _download_attachments(self, attachments: list[Any]) -> list[str]:
         paths: list[str] = []

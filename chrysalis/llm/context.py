@@ -41,6 +41,8 @@ _LEVEL_SNIP = "snip"
 _LEVEL_FULL = "full"
 
 _CHARS_PER_TOKEN = 2
+_APPROX_CHARS_PER_TOKEN = 4
+_IMAGE_TOKEN_ESTIMATE = 1_200
 _DEFAULT_SOFT_RATIO = 0.70
 _DEFAULT_HARD_RATIO = 0.90
 _RECENT_TURNS_TO_KEEP = 2
@@ -110,6 +112,11 @@ class CompactionManager:
         return max(1, self.config.context_window * _CHARS_PER_TOKEN)
 
     @property
+    def budget_tokens(self) -> int:
+        """模型输入窗口预算，单位是估算 token。"""
+        return max(1, self.config.context_window)
+
+    @property
     def soft_budget_chars(self) -> int:
         """soft 边界：超过它就主动开始压缩，但还不算失败。"""
         ratio = getattr(self.config, "compression_soft_limit_ratio", _DEFAULT_SOFT_RATIO)
@@ -120,6 +127,18 @@ class CompactionManager:
         """hard 边界：超过它说明必须更激进地压缩或丢弃旧内容。"""
         ratio = getattr(self.config, "compression_hard_limit_ratio", _DEFAULT_HARD_RATIO)
         return max(1, int(self.budget_chars * ratio))
+
+    @property
+    def soft_budget_tokens(self) -> int:
+        """soft 边界，单位是估算 token。"""
+        ratio = getattr(self.config, "compression_soft_limit_ratio", _DEFAULT_SOFT_RATIO)
+        return max(1, int(self.budget_tokens * ratio))
+
+    @property
+    def hard_budget_tokens(self) -> int:
+        """hard 边界，单位是估算 token。"""
+        ratio = getattr(self.config, "compression_hard_limit_ratio", _DEFAULT_HARD_RATIO)
+        return max(1, int(self.budget_tokens * ratio))
 
     @property
     def compression_enabled(self) -> bool:
@@ -179,24 +198,24 @@ class CompactionManager:
             self.last_stats = stats
             return stats
 
-        if estimate_request_cost(history, system=system, tools=tools) > self.soft_budget_chars:
+        if estimate_request_tokens(history, system=system, tools=tools) > self.soft_budget_tokens:
             # 第一步先把“当前最后一条 user 消息里的大工具结果”落盘，避免它直接撑爆请求。
             stats.tool_results_archived += self.apply_tool_result_budget(history)
 
-        if estimate_request_cost(history, system=system, tools=tools) > self.soft_budget_chars:
+        if estimate_request_tokens(history, system=system, tools=tools) > self.soft_budget_tokens:
             # 第二步做 B 层 micro：保留最近尾部，裁剪更旧的工具输出和重内容。
             microcompact_history(history,keep_recent=_RECENT_TURNS_TO_KEEP,protect_tail_tokens=self.tail_token_budget)
             stats.micro_compacted = True
             repair_tool_pairs(history)
 
-        if estimate_request_cost(history, system=system, tools=tools) > self.soft_budget_chars:
+        if estimate_request_tokens(history, system=system, tools=tools) > self.soft_budget_tokens:
             # 第三步如果还超 soft，把稳定中间段压成一个 C。
             snip_compact_history(history, keep_recent_turns=_RECENT_TURNS_TO_KEEP, max_messages=0)
             stats.snip_compacted = True
             repair_tool_pairs(history)
 
             # 第四步如果还超 soft，把最新 D 后面的 C 合成新的 D；旧 D 不会被改写。
-        if estimate_request_cost(history, system=system, tools=tools) > self.soft_budget_chars and self.full_compact_available:
+        if estimate_request_tokens(history, system=system, tools=tools) > self.soft_budget_tokens and self.full_compact_available:
             if full_compact_history(history,target_chars=self.soft_budget_chars,keep_recent_turns=_RECENT_TURNS_TO_KEEP):
                 stats.full_compacted = True
                 self.failures = 0
@@ -206,12 +225,12 @@ class CompactionManager:
             repair_tool_pairs(history)
 
         # 最后的保险丝：超过 hard 时，牺牲最旧内容来保证请求能发出去。
-        if estimate_request_cost(history, system=system, tools=tools) > self.hard_budget_chars:
+        if estimate_request_tokens(history, system=system, tools=tools) > self.hard_budget_tokens:
             dropped = drop_non_a_messages(history)
             if dropped:
                 stats.notes.append(f"dropped {dropped} non-A compact messages ({reason})")
 
-        while len(history) > 3 and estimate_request_cost(history, system=system, tools=tools) > self.hard_budget_chars:
+        while len(history) > 3 and estimate_request_tokens(history, system=system, tools=tools) > self.hard_budget_tokens:
             drop_oldest_turn(history)
             repair_tool_pairs(history)
 
@@ -233,7 +252,7 @@ class CompactionManager:
         """
         if not self.compression_enabled or not self.full_compact_available:
             return False
-        return estimate_request_cost(history, system=system, tools=tools) > self.soft_budget_chars
+        return estimate_request_tokens(history, system=system, tools=tools) > self.soft_budget_tokens
 
     def build_llm_summary_request(self, history: list[dict]) -> list[dict]:
         """构造给 LLM summary 子调用的消息。
@@ -307,13 +326,13 @@ class CompactionManager:
         repair_tool_pairs(history)
 
         # 如果仍然过大，按硬限制的 75% 继续丢弃最旧内容，保证重试成功率。
-        reactive_limit = max(1, int(self.hard_budget_chars * 0.75))
-        if estimate_request_cost(history) > reactive_limit:
+        reactive_limit = max(1, int(self.hard_budget_tokens * 0.75))
+        if estimate_request_tokens(history) > reactive_limit:
             dropped = drop_non_a_messages(history, keep_recent_turns=_REACTIVE_KEEP_RECENT_TURNS)
             if dropped:
                 stats.notes.append(f"dropped {dropped} non-A compact messages ({reason})")
 
-        while len(history) > 3 and estimate_request_cost(history) > reactive_limit:
+        while len(history) > 3 and estimate_request_tokens(history) > reactive_limit:
             drop_oldest_turn(history)
             repair_tool_pairs(history)
 
@@ -386,17 +405,17 @@ class CompactionManager:
 
 def trim_messages_history(history: list[dict], context_window: int) -> None:
     """旧版兼容入口：按 context_window 对 history 做一次完整裁剪。"""
-    budget = max(1, context_window * _CHARS_PER_TOKEN)
+    budget = max(1, context_window)
     soft_budget = max(1, int(budget * _DEFAULT_SOFT_RATIO))
     repair_tool_pairs(history)
-    if estimate_context_cost(history) > soft_budget:
+    if estimate_context_tokens(history) > soft_budget:
         microcompact_history(history)
         snip_compact_history(history)
-        full_compact_history(history, target_chars=soft_budget)
+        full_compact_history(history, target_chars=soft_budget * _APPROX_CHARS_PER_TOKEN)
         repair_tool_pairs(history)
-    if estimate_context_cost(history) > budget:
+    if estimate_context_tokens(history) > budget:
         drop_non_a_messages(history)
-    while len(history) > 3 and estimate_context_cost(history) > budget:
+    while len(history) > 3 and estimate_context_tokens(history) > budget:
         drop_oldest_turn(history)
         repair_tool_pairs(history)
 
@@ -713,13 +732,7 @@ def _micro_prune_boundary(
 
 def _message_token_estimate(msg: dict) -> int:
     """粗略估算单条消息 token 数，用于尾部保护预算。"""
-    tokens = len(json.dumps(msg, ensure_ascii=False, default=str)) // _CHARS_PER_TOKEN + 10
-    for block in msg.get("blocks", []):
-        if not isinstance(block, dict):
-            continue
-        if block.get("type") == "tool_use":
-            tokens += len(str(block.get("arguments", ""))) // _CHARS_PER_TOKEN
-    return max(1, tokens)
+    return estimate_context_tokens([msg])
 
 
 def _find_latest_full_index(history: list[dict]) -> int:
@@ -1063,6 +1076,33 @@ def estimate_context_cost(history: list[dict]) -> int:
     return sum(len(json.dumps(m, ensure_ascii=False, default=str)) for m in history)
 
 
+def estimate_context_tokens(history: list[dict]) -> int:
+    """估算 canonical history 的模型输入 token。
+
+    这里刻意不把 canonical JSON 或图片 base64 当作纯文本计算。实际请求会在
+    protocols 层转换为 provider wire format，图片也由模型按视觉块计费/计量。
+    """
+    return sum(_estimate_message_tokens(m) for m in history)
+
+
+def estimate_request_tokens(
+    history: list[dict],
+    *,
+    system: str = "",
+    tools: list[dict] | None = None,
+    reserve_output_tokens: int = 0,
+) -> int:
+    """估算一次完整请求的输入 token，用于压缩预算和 UI 上下文仪表。"""
+    tokens = estimate_context_tokens(history)
+    if system:
+        tokens += _count_text_tokens(system)
+    if tools:
+        tokens += _count_text_tokens(json.dumps(tools, ensure_ascii=False, default=str))
+    if reserve_output_tokens > 0:
+        tokens += reserve_output_tokens
+    return max(1, tokens)
+
+
 def estimate_request_cost(
     history: list[dict],
     *,
@@ -1084,6 +1124,45 @@ def estimate_request_cost(
 def _calc_cost(history: list[dict]) -> int:
     """旧测试/旧调用兼容别名。"""
     return estimate_context_cost(history)
+
+
+def _estimate_message_tokens(msg: dict) -> int:
+    tokens = 4
+    role = str(msg.get("role") or "")
+    if role:
+        tokens += _count_text_tokens(role)
+    for block in msg.get("blocks", []):
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "text":
+            tokens += _count_text_tokens(str(block.get("text", "")))
+        elif btype == "thinking":
+            tokens += _count_text_tokens(str(block.get("text", "")))
+        elif btype == "tool_use":
+            tokens += _count_text_tokens(str(block.get("name", "")))
+            tokens += _count_text_tokens(str(block.get("arguments", "")))
+            tokens += 12
+        elif btype == "tool_result":
+            tokens += _count_text_tokens(str(block.get("content", "")))
+            tokens += 8
+        elif btype == "image":
+            tokens += _IMAGE_TOKEN_ESTIMATE
+        else:
+            tokens += _count_text_tokens(json.dumps(block, ensure_ascii=False, default=str))
+    return max(1, tokens)
+
+
+def _count_text_tokens(text: str) -> int:
+    if not text:
+        return 0
+    try:
+        import tiktoken
+
+        encoding = tiktoken.get_encoding("o200k_base")
+        return len(encoding.encode(text))
+    except Exception:
+        return max(1, len(text) // _APPROX_CHARS_PER_TOKEN)
 
 
 def is_context_limit_error(response: Response | None) -> bool:
